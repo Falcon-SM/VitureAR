@@ -1,0 +1,189 @@
+import SwiftUI
+import AVFoundation
+
+/*
+ struct ContentView: View {
+ @StateObject private var cameraManager = CameraManager()
+ 
+ var body: some View {
+ ZStack {
+ Color.black.edgesIgnoringSafeArea(.all)
+ 
+ // 【変更】hands配列の中身をForEachで回して、見つかった数だけ描画する
+ if !cameraManager.hands.isEmpty {
+ ForEach(0..<cameraManager.hands.count, id: \.self) { index in
+ HandSkeletonView(joints: cameraManager.hands[index])
+ }
+ } else {
+ Text("手をカメラに向けてください")
+ .foregroundColor(.gray)
+ .font(.title2)
+ }
+ }
+ .frame(minWidth: 640, minHeight: 480)
+ .onAppear {
+ cameraManager.checkPermissions()
+ }
+ .onDisappear {
+ cameraManager.session.stopRunning()
+ }
+ }
+ }
+ */
+
+import SwiftUI
+
+// MARK: - アプリの状態管理とメイン画面
+enum AppState {
+    case launch
+    case depthCamera
+    case usbCamera
+    case arMode
+}
+
+struct ContentView: View {
+    @State private var currentMode: AppState = .launch
+    
+    var body: some View {
+        ZStack {
+            switch currentMode {
+            case .launch:
+                LaunchView(currentMode: $currentMode)
+            case .depthCamera:
+                ARContentView(currentMode: $currentMode)
+            case .usbCamera:
+                USBCameraModeView(currentMode: $currentMode)
+            case .arMode:
+                ARModeView(currentMode: $currentMode)
+            }
+        }
+    }
+}
+
+// MARK: - 共通コンポーネント
+struct BackButton: View {
+    @Binding var currentMode: AppState
+    
+    var body: some View {
+        VStack {
+            HStack {
+                Button(action: {
+                    withAnimation { currentMode = .launch }
+                }) {
+                    Image(systemName: "chevron.left")
+                        .font(.title2)
+                        .padding(12)
+                        .background(Color.black.opacity(0.6))
+                        .foregroundColor(.white)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(PlainButtonStyle())
+                .padding()
+                
+                Spacer()
+            }
+            Spacer()
+        }
+    }
+}
+
+// MARK: - スタート画面 (メニュー)
+struct LaunchView: View {
+    @Binding var currentMode: AppState
+    
+    var body: some View {
+        VStack(spacing: 50) {
+            Text("VITURE AR Experience")
+                .font(.system(size: 48, weight: .bold))
+            
+            VStack(spacing: 20) {
+                MenuButton(
+                    title: "1. 深度カメラモード",
+                    subtitle: "左右のカメラ映像と距離計算をテストします",
+                    color: .blue
+                ) {
+                    currentMode = .depthCamera
+                }
+                
+                MenuButton(
+                    title: "2. USBカメラモード",
+                    subtitle: "カメラ映像と手の関節スケルトンを重ねて表示します",
+                    color: .purple
+                ) {
+                    currentMode = .usbCamera
+                }
+                
+                MenuButton(
+                    title: "3. ARモード",
+                    subtitle: "現在開発中！お楽しみに",
+                    color: .orange
+                ) {
+                    currentMode = .arMode
+                }
+            }
+        }
+        .frame(width: 800, height: 600)
+        .background(Color(NSColor.windowBackgroundColor))
+    }
+}
+
+struct MenuButton: View {
+    let title: String
+    let subtitle: String
+    let color: Color
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: {
+            withAnimation { action() }
+        }) {
+            HStack {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(title)
+                        .font(.title2)
+                        .fontWeight(.bold)
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundColor(.white.opacity(0.9))
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.title2)
+            }
+            .padding(.horizontal, 30)
+            .padding(.vertical, 20)
+            .frame(width: 500)
+            .background(color)
+            .foregroundColor(.white)
+            .cornerRadius(15)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
+// MARK: - 3. ARモード (準備中)
+struct ARModeView: View {
+    @Binding var currentMode: AppState
+    
+    var body: some View {
+        ZStack {
+            Color.black.edgesIgnoringSafeArea(.all)
+            
+            VStack(spacing: 30) {
+                Image(systemName: "hammer.fill")
+                    .font(.system(size: 80))
+                    .foregroundColor(.yellow)
+                
+                Text("AR Mode")
+                    .font(.system(size: 48, weight: .bold))
+                    .foregroundColor(.white)
+                
+                Text("現在準備中です...")
+                    .font(.title)
+                    .foregroundColor(.gray)
+            }
+            
+            BackButton(currentMode: $currentMode)
+        }
+    }
+}
