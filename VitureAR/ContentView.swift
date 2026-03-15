@@ -33,7 +33,7 @@ import AVFoundation
 
 import SwiftUI
 
-// MARK: - アプリの状態管理とメイン画面
+// MARK: - App Status
 enum AppState {
     case launch
     case depthCamera
@@ -60,7 +60,7 @@ struct ContentView: View {
     }
 }
 
-// MARK: - 共通コンポーネント
+// MARK: - Common Components
 struct BackButton: View {
     @Binding var currentMode: AppState
     
@@ -87,7 +87,7 @@ struct BackButton: View {
     }
 }
 
-// MARK: - スタート画面 (メニュー)
+// MARK: - Start
 struct LaunchView: View {
     @Binding var currentMode: AppState
     
@@ -98,24 +98,24 @@ struct LaunchView: View {
             
             VStack(spacing: 20) {
                 MenuButton(
-                    title: "1. 深度カメラモード",
-                    subtitle: "左右のカメラ映像と距離計算をテストします",
+                    title: "1. Depth Camera",
+                    subtitle: "Show Left/Right Camera movies and test distance calculation",
                     color: .blue
                 ) {
                     currentMode = .depthCamera
                 }
                 
                 MenuButton(
-                    title: "2. USBカメラモード",
-                    subtitle: "カメラ映像と手の関節スケルトンを重ねて表示します",
+                    title: "2. USB Camera",
+                    subtitle: "Overlay Hands' Scelton",
                     color: .purple
                 ) {
                     currentMode = .usbCamera
                 }
                 
                 MenuButton(
-                    title: "3. ARモード",
-                    subtitle: "現在開発中！お楽しみに",
+                    title: "3. AR Mode",
+                    subtitle: "Under Development!",
                     color: .orange
                 ) {
                     currentMode = .arMode
@@ -161,7 +161,7 @@ struct MenuButton: View {
     }
 }
 
-// MARK: - 3. ARモード (準備中)
+// MARK: - 3. AR Mode
 struct ARModeView: View {
     @Binding var currentMode: AppState
     
@@ -178,7 +178,7 @@ struct ARModeView: View {
                     .font(.system(size: 48, weight: .bold))
                     .foregroundColor(.white)
                 
-                Text("現在準備中です...")
+                Text("Preparing...")
                     .font(.title)
                     .foregroundColor(.gray)
             }

@@ -7,7 +7,6 @@
 
 @implementation GlassesManager {
     XRDeviceProviderHandle _handle;
-    // 変更：引数が2つ（左、右）のブロックに変更
     void (^_frameHandler)(CVPixelBufferRef, CVPixelBufferRef);
 }
 
@@ -57,21 +56,20 @@ static int detectViturePID() {
     return 0;
 }
 
-// 変更：左と右の両方のデータを取得する
 static void GlobalCameraCallback(char* image_left0, char* image_right0,
                                  char* image_left1, char* image_right1,
                                  double timestamp, int width, int height) {
-    if (!image_left0 || !image_right0) return; // 左右両方あるか確認
+    if (!image_left0 || !image_right0) return;
     [[GlassesManager sharedManager] processRawFrameLeft:image_left0 right:image_right0 width:width height:height];
 }
 
 - (BOOL)setupAndConnect {
     int pid = detectViturePID();
     if (pid == 0) {
-        NSLog(@"[エラー] VITUREグラスがUSBで見つかりませんでした。");
+        NSLog(@"[Error] VITURE Glass Not Found in USB.");
         return NO;
     }
-    NSLog(@"[成功] VITUREグラスを検出しました。PID: 0x%04X", pid);
+    NSLog(@"[Success] VITURE Glass Found! PID: 0x%04X", pid);
 
     _handle = xr_device_provider_create(pid);
     if (!_handle) return NO;
@@ -88,7 +86,6 @@ static void GlobalCameraCallback(char* image_left0, char* image_right0,
     _frameHandler = handler;
 }
 
-// 共通化：char* から CVPixelBuffer を作る便利メソッド
 - (CVPixelBufferRef)createPixelBufferFromData:(char*)rawData width:(int)w height:(int)h {
     CVPixelBufferRef pixelBuffer = NULL;
     CVReturn status = CVPixelBufferCreate(kCFAllocatorDefault, w, h,
@@ -108,7 +105,6 @@ static void GlobalCameraCallback(char* image_left0, char* image_right0,
     return NULL;
 }
 
-// 変更：左右両方を変換してハンドラに渡す
 - (void)processRawFrameLeft:(char*)leftData right:(char*)rightData width:(int)w height:(int)h {
     if (!_frameHandler) return;
 

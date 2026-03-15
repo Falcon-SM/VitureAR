@@ -4,13 +4,13 @@ import SwiftUI
 import Combine
 import Vision
 
-// MARK: - Hand Data Model (左右の区別と距離情報を持つ)
+// MARK: - Hand Data Model
 struct HandData: Identifiable {
     let id = UUID()
     var isRight: Bool
     let joints: [VNHumanHandPoseObservation.JointName: CGPoint]
     let indexTip: CGPoint?
-    let distance: CGFloat // 深度カメラ等から取得した距離データ
+    let distance: CGFloat
 }
 
 // MARK: - Camera Manager
@@ -32,7 +32,7 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
                 }
             }
         default:
-            print("カメラへのアクセスが拒否されています")
+            print("Camera Access Denyed")
         }
     }
     
@@ -80,12 +80,12 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
             self?.processHandPose(request: request)
         }
         
-        request.maximumHandCount = 2 // 両手まで検出可能
+        request.maximumHandCount = 2 // Both Hands can be Detected
         
         do {
             try handler.perform([request])
         } catch {
-            print("Visionエラー: \(error)")
+            print("Vision Error: \(error)")
         }
     }
     
@@ -95,13 +95,12 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
             return
         }
         
-        // 処理中の一時的な手を保存する構造体
         struct TempHand {
             var isRight: Bool
             let joints: [VNHumanHandPoseObservation.JointName: CGPoint]
             let indexTip: CGPoint?
             let distance: CGFloat
-            let centerX: CGFloat // 手首のX座標（左右判定の補正用）
+            let centerX: CGFloat
         }
         
         var tempHands: [TempHand] = []
@@ -109,10 +108,10 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
         for observation in observations {
             var points: [VNHumanHandPoseObservation.JointName: CGPoint] = [:]
             
-            // Vision AIによる初期判定
+            // Vision
             var isRight = false
-            if #available(iOS 15.0, *) {
-                // カメラ映像をミラーリングしているため、判定を逆にする
+            if #available(macOS 14.0, iOS 15.0, *) {
+                // Because of Mirroring, Reverse
                 isRight = observation.chirality == .left
             }
             
@@ -130,20 +129,19 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
                 let indexTip = points[.indexTip]
                 let distance = getDepthDistance(joints: points, indexTip: indexTip)
                 
-                // 手首のX座標を位置基準として取得
+                // X Position of Wrist as Center
                 let centerX = points[.wrist]?.x ?? 0.5
                 
                 tempHands.append(TempHand(isRight: isRight, joints: points, indexTip: indexTip, distance: distance, centerX: centerX))
                 
             } catch {
-                print("関節の取得エラー")
+                print("Error acquiring Hands")
             }
         }
         
-        // ★ ここで左右の判定を安定化させる補正を行います
+        // Stabalize
         if tempHands.count == 2 {
-            // 両手が検出されている場合、画面の右側（X座標が大きい方）にある手を「右手」、
-            // 左側にある手を「左手」として強制的に上書きして安定させます。
+            // When Both hands detected, Left → Left Hand, Right → Right Hand
             if tempHands[0].centerX > tempHands[1].centerX {
                 tempHands[0].isRight = true
                 tempHands[1].isRight = false
@@ -153,7 +151,6 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
             }
         }
         
-        // 最終的なデータに変換
         var detectedHands: [HandData] = []
         for temp in tempHands {
             detectedHands.append(HandData(
@@ -169,20 +166,13 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
         }
     }
     
-    /// 人差し指の位置や手の大きさから距離(深度)を計算する関数
-    /// （後で深度カメラの値に置き換えるためのプレースホルダーです）
+    // Calculate Depth
     private func getDepthDistance(joints: [VNHumanHandPoseObservation.JointName: CGPoint], indexTip: CGPoint?) -> CGFloat {
-        // TODO: ここに深度カメラ（LiDARやステレオ）から実際の距離(m)を取得する処理を記述します。
-        // 引数の indexTip (人差し指の先端) の座標を使って深度マップから値を引き抜く流れになります。
-        
-        // 現在はダミーとして、手の「画面上の大きさ」から擬似的に距離を推定しています。
         guard let wrist = joints[.wrist], let middleMCP = joints[.middleMCP] else { return 1.0 }
         let dx = wrist.x - middleMCP.x
         let dy = wrist.y - middleMCP.y
-        let size = sqrt(dx*dx + dy*dy) // 手の大きさ
+        let size = sqrt(dx*dx + dy*dy)
         
-        // 手が大きい(size大) = 近い(distance小) となるように計算
-        // 後で実際のメートル単位などに差し替えてください
         return 1.0 / max(size, 0.01)
     }
 }
@@ -215,7 +205,7 @@ enum EyeViewMode: Hashable {
     case both
 }
 
-// MARK: - 2. USB Camera Mode View
+// MARK: - USBCameraModeView
 struct USBCameraModeView: View {
     @Binding var currentMode: AppState
     @StateObject private var cameraManager = CameraManager()
@@ -231,9 +221,6 @@ struct USBCameraModeView: View {
     
     @State private var lineWidth: CGFloat = 4.0
     @State private var jointSize: CGFloat = 10.0
-    
-    // 距離に対する視差の強さを決める係数
-    @State private var parallaxMultiplier: CGFloat = 20.0
     
     var body: some View {
         ZStack {
@@ -266,7 +253,7 @@ struct USBCameraModeView: View {
             
             BackButton(currentMode: $currentMode)
             
-            // UIパネルと設定ボタン
+            // UI Panel, Settings
             HStack {
                 Spacer()
                 if isSettingsVisible {
@@ -316,15 +303,11 @@ struct USBCameraModeView: View {
             
             if !cameraManager.hands.isEmpty {
                 ForEach(cameraManager.hands) { hand in
-                    // 計算式: 視差 = 係数 / 距離 (手が近いほど視差が大きくなる)
-                    // 後で深度カメラを繋いだ時も、この parallaxMultiplier を調整すればキャリブレーション可能
-                    let calculatedParallax = parallaxMultiplier / max(hand.distance, 0.1)
-                    let currentParallax = isLeft ? calculatedParallax : -calculatedParallax
-                    
+                    // Same Position
                     HandSkeletonView(
                         joints: hand.joints,
                         isRight: hand.isRight,
-                        offsetX: params.offsetX + currentParallax, // 視差を足す
+                        offsetX: params.offsetX,
                         offsetY: params.offsetY,
                         scaleX: params.scaleX,
                         scaleY: params.scaleY,
@@ -355,7 +338,7 @@ struct USBCameraModeView: View {
             VStack(alignment: .trailing, spacing: 12) {
                 
                 HStack {
-                    Text("表示・全体設定")
+                    Text("View Settings")
                         .font(.headline)
                         .foregroundColor(.green)
                     Spacer()
@@ -372,31 +355,31 @@ struct USBCameraModeView: View {
                 }
                 .frame(maxWidth: .infinity)
                 
-                Toggle("左右分割 (SBS) モード", isOn: $isSBSMode)
+                Toggle("SBS Mode", isOn: $isSBSMode)
                     .toggleStyle(SwitchToggleStyle())
                 
-                Toggle("カメラ映像を表示", isOn: $showVideo)
+                Toggle("Show Camera Video", isOn: $showVideo)
                     .toggleStyle(SwitchToggleStyle())
                 
-                Toggle("全体を表示 (Aspect Fit)", isOn: $isAspectFit)
+                Toggle("Aspect Fit", isOn: $isAspectFit)
                     .toggleStyle(SwitchToggleStyle())
                 
                 Divider().background(Color.white)
                 
-                Picker("表示・調整対象", selection: $viewMode) {
-                    Text("左目のみ").tag(EyeViewMode.left)
-                    Text("右目のみ").tag(EyeViewMode.right)
-                    Text("両目(確認)").tag(EyeViewMode.both)
+                Picker("Show...", selection: $viewMode) {
+                    Text("Left").tag(EyeViewMode.left)
+                    Text("Right").tag(EyeViewMode.right)
+                    Text("Both").tag(EyeViewMode.both)
                 }
                 .pickerStyle(SegmentedPickerStyle())
                 .padding(.vertical, 5)
                 
                 if viewMode == .left {
-                    calibrationContent(title: "左目の調整", params: $leftParams, color: .cyan, isLeft: true)
+                    calibrationContent(title: "Adjust Left", params: $leftParams, color: .cyan, isLeft: true)
                 } else if viewMode == .right {
-                    calibrationContent(title: "右目の調整", params: $rightParams, color: .orange, isLeft: false)
+                    calibrationContent(title: "Adjust Right", params: $rightParams, color: .orange, isLeft: false)
                 } else {
-                    Text("両目モードでは個別の調整パネルを隠しています。\n左右どちらかを選択して微調整してください。")
+                    Text("In Both, individual adjustment panels are hidden. \n Choose either to adjust.")
                         .font(.footnote)
                         .foregroundColor(.gray)
                         .multilineTextAlignment(.trailing)
@@ -405,25 +388,18 @@ struct USBCameraModeView: View {
                 
                 Divider().background(Color.white)
                 
-                Text("見た目と3Dの調整 (左右共通)")
+                Text("View")
                     .font(.subheadline)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                
-                // 深度と視差のキャリブレーション用スライダー
-                HStack {
-                    Text(String(format: "3D視差の強さ: %.1f", parallaxMultiplier))
-                        .frame(width: 140, alignment: .leading)
-                    Slider(value: $parallaxMultiplier, in: 0...100)
-                }
                     
                 HStack {
-                    Text(String(format: "線の太さ: %.1f", lineWidth))
+                    Text(String(format: "Line Thickness: %.1f", lineWidth))
                         .frame(width: 140, alignment: .leading)
                     Slider(value: $lineWidth, in: 1...20)
                 }
                 
                 HStack {
-                    Text(String(format: "点のサイズ: %.1f", jointSize))
+                    Text(String(format: "Point Size: %.1f", jointSize))
                         .frame(width: 140, alignment: .leading)
                     Slider(value: $jointSize, in: 1...30)
                 }
@@ -448,55 +424,55 @@ struct USBCameraModeView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .foregroundColor(color)
         
-        Text("1. カメラ映像・スケルトンの表示領域")
+        Text("1. Camera Video, Scelton Adjustment")
             .font(.subheadline)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, 5)
         
         HStack {
-            Text(String(format: "拡大率: %.2f", params.videoScale.wrappedValue))
+            Text(String(format: "Magnification: %.2f", params.videoScale.wrappedValue))
                 .frame(width: 100, alignment: .leading)
             Slider(value: params.videoScale, in: 0.1...5.0)
         }
         
         HStack {
-            Text("Xズレ: \(Int(params.videoOffsetX.wrappedValue))")
+            Text("X Adjustment: \(Int(params.videoOffsetX.wrappedValue))")
                 .frame(width: 100, alignment: .leading)
             Slider(value: params.videoOffsetX, in: -1000...1000)
         }
         
         HStack {
-            Text("Yズレ: \(Int(params.videoOffsetY.wrappedValue))")
+            Text("Y Adjustment: \(Int(params.videoOffsetY.wrappedValue))")
                 .frame(width: 100, alignment: .leading)
             Slider(value: params.videoOffsetY, in: -1000...1000)
         }
         
         Divider().background(Color.white)
         
-        Text("2. スケルトン単体の微調整")
+        Text("2. Scelton Adjustment")
             .font(.subheadline)
             .frame(maxWidth: .infinity, alignment: .leading)
         
         HStack {
-            Text(String(format: "幅: %.2f", params.scaleX.wrappedValue))
+            Text(String(format: "Width: %.2f", params.scaleX.wrappedValue))
                 .frame(width: 100, alignment: .leading)
             Slider(value: params.scaleX, in: 0.1...3.0)
         }
         
         HStack {
-            Text(String(format: "高さ: %.2f", params.scaleY.wrappedValue))
+            Text(String(format: "Height: %.2f", params.scaleY.wrappedValue))
                 .frame(width: 100, alignment: .leading)
             Slider(value: params.scaleY, in: 0.1...3.0)
         }
         
         HStack {
-            Text("単体Xズレ: \(Int(params.offsetX.wrappedValue))")
+            Text("X: \(Int(params.offsetX.wrappedValue))")
                 .frame(width: 100, alignment: .leading)
             Slider(value: params.offsetX, in: -1000...1000)
         }
         
         HStack {
-            Text("単体Yズレ: \(Int(params.offsetY.wrappedValue))")
+            Text("Y: \(Int(params.offsetY.wrappedValue))")
                 .frame(width: 100, alignment: .leading)
             Slider(value: params.offsetY, in: -1000...1000)
         }
@@ -504,7 +480,7 @@ struct USBCameraModeView: View {
         Button(action: {
             params.wrappedValue = isLeft ? CalibrationParams.defaultLeft : CalibrationParams.defaultRight
         }) {
-            Text("最適値にリセット")
+            Text("Reset to best")
                 .frame(maxWidth: .infinity)
                 .padding(8)
                 .background(color)
@@ -557,7 +533,7 @@ class VideoPreviewNSView: NSView {
 // MARK: - Hand Skeleton View
 struct HandSkeletonView: View {
     var joints: [VNHumanHandPoseObservation.JointName: CGPoint]
-    var isRight: Bool // 右手か左手か
+    var isRight: Bool
     
     var offsetX: CGFloat
     var offsetY: CGFloat
@@ -574,7 +550,6 @@ struct HandSkeletonView: View {
         [.wrist, .littleMCP, .littlePIP, .littleDIP, .littleTip]
     ]
     
-    // 右手と左手で色を変える
     var handColor: Color {
         return isRight ? .orange : .cyan
     }
