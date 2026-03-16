@@ -1,6 +1,8 @@
 SDK/*
 	!SDK/GlassesManager.h
 	!SDK/GlassesManager.mm
+VitureAR.xcodeproj/xcuserdata/
+VitureAR.xcodeproj/project.xcworkspace/xcuserdata/
 
 .DS_Store
 UserInterfaceState.xcuserstate
