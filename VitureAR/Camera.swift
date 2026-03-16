@@ -21,6 +21,13 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
     private let videoOutput = AVCaptureVideoDataOutput()
     private let videoQueue = DispatchQueue(label: "videoQueue", qos: .userInteractive)
     
+    // Requestをプロパティとして保持し、毎フレームの生成コストを削減
+    private let handPoseRequest: VNDetectHumanHandPoseRequest = {
+        let request = VNDetectHumanHandPoseRequest()
+        request.maximumHandCount = 2 // Both Hands can be Detected
+        return request
+    }()
+    
     func checkPermissions() {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
@@ -32,7 +39,7 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
                 }
             }
         default:
-            print("Camera Access Denyed")
+            print("Camera Access Denied") // Typo fixed
         }
     }
     
@@ -76,21 +83,19 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
     
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         let handler = VNImageRequestHandler(cmSampleBuffer: sampleBuffer, orientation: .up, options: [:])
-        let request = VNDetectHumanHandPoseRequest { [weak self] request, error in
-            self?.processHandPose(request: request)
-        }
-        
-        request.maximumHandCount = 2 // Both Hands can be Detected
         
         do {
-            try handler.perform([request])
+            try handler.perform([handPoseRequest])
+            if let observations = handPoseRequest.results {
+                processHandPose(observations: observations)
+            }
         } catch {
             print("Vision Error: \(error)")
         }
     }
     
-    private func processHandPose(request: VNRequest) {
-        guard let observations = request.results as? [VNHumanHandPoseObservation], !observations.isEmpty else {
+    private func processHandPose(observations: [VNHumanHandPoseObservation]) {
+        guard !observations.isEmpty else {
             DispatchQueue.main.async { self.hands.removeAll() }
             return
         }
@@ -110,7 +115,8 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
             
             // Vision
             var isRight = false
-            if #available(macOS 14.0, iOS 15.0, *) {
+            // chirality is available from macOS 11.0 / iOS 14.0
+            if #available(macOS 11.0, iOS 14.0, *) {
                 // Because of Mirroring, Reverse
                 isRight = observation.chirality == .left
             }
@@ -139,7 +145,7 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
             }
         }
         
-        // Stabalize
+        // Stabilize (Typo fixed)
         if tempHands.count == 2 {
             // When Both hands detected, Left → Left Hand, Right → Right Hand
             if tempHands[0].centerX > tempHands[1].centerX {
@@ -151,14 +157,13 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
             }
         }
         
-        var detectedHands: [HandData] = []
-        for temp in tempHands {
-            detectedHands.append(HandData(
+        let detectedHands = tempHands.map { temp in
+            HandData(
                 isRight: temp.isRight,
                 joints: temp.joints,
                 indexTip: temp.indexTip,
                 distance: temp.distance
-            ))
+            )
         }
         
         DispatchQueue.main.async {
@@ -189,12 +194,12 @@ struct CalibrationParams {
     var scaleY: CGFloat
     
     static let defaultLeft = CalibrationParams(
-        videoScale: 1.98, videoOffsetX: 154, videoOffsetY: -372,
+        videoScale: 1.90, videoOffsetX: 176, videoOffsetY: -368,
         offsetX: 0, offsetY: 0, scaleX: 1.0, scaleY: 1.0
     )
     
     static let defaultRight = CalibrationParams(
-        videoScale: 2.11, videoOffsetX: -92, videoOffsetY: -366,
+        videoScale: 1.90, videoOffsetX: -176, videoOffsetY: -368,
         offsetX: 0, offsetY: 0, scaleX: 1.0, scaleY: 1.0
     )
 }
@@ -222,73 +227,100 @@ struct USBCameraModeView: View {
     @State private var lineWidth: CGFloat = 4.0
     @State private var jointSize: CGFloat = 10.0
     
+    // ★ 追加: スケルトンの視差（Parallax）調整用変数
+    @State private var skeletonParallax: CGFloat = 10.0
+    
     var body: some View {
         ZStack {
             Color.black.edgesIgnoringSafeArea(.all)
             
-            if isSBSMode {
-                HStack(spacing: 0) {
-                    if viewMode == .left || viewMode == .both {
-                        eyeView(params: leftParams, label: viewMode == .both ? "Left Eye" : "", isLeft: true)
-                    } else {
-                        Color.black
-                    }
-                    
-                    if viewMode == .right || viewMode == .both {
-                        eyeView(params: rightParams, label: viewMode == .both ? "Right Eye" : "", isLeft: false)
-                    } else {
-                        Color.black
-                    }
-                }
-            } else {
-                if viewMode == .both {
-                    HStack(spacing: 0) {
-                        eyeView(params: leftParams, label: "Left Eye", isLeft: true)
-                        eyeView(params: rightParams, label: "Right Eye", isLeft: false)
-                    }
-                } else {
-                    eyeView(params: viewMode == .left ? leftParams : rightParams, label: "", isLeft: viewMode == .left)
-                }
-            }
+            // メインビュー領域
+            mainContentView
             
+            // 戻るボタン
             BackButton(currentMode: $currentMode)
             
-            // UI Panel, Settings
-            HStack {
-                Spacer()
-                if isSettingsVisible {
-                    unifiedPanel
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                } else {
-                    VStack {
-                        Spacer()
-                        Button(action: {
-                            withAnimation(.spring()) {
-                                isSettingsVisible = true
-                            }
-                        }) {
-                            Image(systemName: "gearshape.fill")
-                                .font(.system(size: 30))
-                                .foregroundColor(.white)
-                                .padding()
-                                .background(Color.black.opacity(0.6))
-                                .clipShape(Circle())
-                                .shadow(radius: 5)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .padding()
-                        .padding(.bottom, 20)
-                    }
-                }
-            }
-            .padding()
+            // 設定パネル用オーバーレイ
+            settingsOverlay
         }
         .onAppear {
             cameraManager.checkPermissions()
+            GlassesManager.shared().setupAndConnect()
         }
         .onDisappear {
             cameraManager.session.stopRunning()
         }
+    }
+    
+    @ViewBuilder
+    private var mainContentView: some View {
+        if isSBSMode {
+            HStack(spacing: 0) {
+                if viewMode == .left || viewMode == .both {
+                    eyeView(params: leftParams, label: viewMode == .both ? "Left Eye" : "", isLeft: true)
+                } else {
+                    Color.black
+                }
+                
+                if viewMode == .right || viewMode == .both {
+                    eyeView(params: rightParams, label: viewMode == .both ? "Right Eye" : "", isLeft: false)
+                } else {
+                    Color.black
+                }
+            }
+        } else {
+            if viewMode == .both {
+                HStack(spacing: 0) {
+                    eyeView(params: leftParams, label: "Left Eye", isLeft: true)
+                    eyeView(params: rightParams, label: "Right Eye", isLeft: false)
+                }
+            } else {
+                eyeView(params: viewMode == .left ? leftParams : rightParams, label: "", isLeft: viewMode == .left)
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var settingsOverlay: some View {
+        HStack {
+            Spacer()
+            if isSettingsVisible {
+                SettingsPanelView(
+                    isSBSMode: $isSBSMode,
+                    showVideo: $showVideo,
+                    isAspectFit: $isAspectFit,
+                    viewMode: $viewMode,
+                    isSettingsVisible: $isSettingsVisible,
+                    leftParams: $leftParams,
+                    rightParams: $rightParams,
+                    lineWidth: $lineWidth,
+                    jointSize: $jointSize,
+                    skeletonParallax: $skeletonParallax
+                )
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+            } else {
+                VStack {
+                    Spacer()
+                    Button(action: {
+                        withAnimation(.spring()) {
+                            isSettingsVisible = true
+                        }
+                    }) {
+                        Image(systemName: "gearshape.fill")
+                            .font(.system(size: 30))
+                            .foregroundColor(.white)
+                            .padding()
+                            .background(Color.black.opacity(0.6))
+                            .clipShape(Circle())
+                            .shadow(radius: 5)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .padding()
+                    .padding(.bottom, 20)
+                }
+            }
+        }
+        .padding()
     }
     
     @ViewBuilder
@@ -303,19 +335,22 @@ struct USBCameraModeView: View {
             
             if !cameraManager.hands.isEmpty {
                 ForEach(cameraManager.hands) { hand in
-                    // Same Position
+                    
+                    // ★ 左目ならマイナス方向、右目ならプラス方向に視差を加える
+                    let currentParallax = isLeft ? -skeletonParallax : skeletonParallax
+                    
                     HandSkeletonView(
                         joints: hand.joints,
                         isRight: hand.isRight,
-                        offsetX: params.offsetX,
+                        offsetX: params.offsetX + currentParallax, // ★ 視差を適用
                         offsetY: params.offsetY,
                         scaleX: params.scaleX,
                         scaleY: params.scaleY,
                         lineWidth: lineWidth,
                         jointSize: jointSize
                     )
-                    .scaleEffect(params.videoScale)
-                    .offset(x: params.videoOffsetX, y: params.videoOffsetY)
+                    .scaleEffect(params.videoScale) // ビデオのスケールと同じスケールで拡大
+                    .offset(x: params.videoOffsetX, y: params.videoOffsetY) // ビデオと同じ基本オフセットに追従
                 }
             }
             
@@ -332,8 +367,25 @@ struct USBCameraModeView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipped()
     }
+}
+
+// MARK: - Settings Panel View
+struct SettingsPanelView: View {
+    @Binding var isSBSMode: Bool
+    @Binding var showVideo: Bool
+    @Binding var isAspectFit: Bool
+    @Binding var viewMode: EyeViewMode
+    @Binding var isSettingsVisible: Bool
     
-    var unifiedPanel: some View {
+    @Binding var leftParams: CalibrationParams
+    @Binding var rightParams: CalibrationParams
+    
+    @Binding var lineWidth: CGFloat
+    @Binding var jointSize: CGFloat
+    
+    @Binding var skeletonParallax: CGFloat // ★ 追加
+    
+    var body: some View {
         ScrollView {
             VStack(alignment: .trailing, spacing: 12) {
                 
@@ -379,12 +431,29 @@ struct USBCameraModeView: View {
                 } else if viewMode == .right {
                     calibrationContent(title: "Adjust Right", params: $rightParams, color: .orange, isLeft: false)
                 } else {
-                    Text("In Both, individual adjustment panels are hidden. \n Choose either to adjust.")
+                    Text("In Both, individual adjustment panels are hidden.\nChoose either to adjust.")
                         .font(.footnote)
                         .foregroundColor(.gray)
                         .multilineTextAlignment(.trailing)
                         .padding(.vertical, 20)
                 }
+                
+                Divider().background(Color.white)
+                
+                Text("3. Skeleton Parallax (Depth)")
+                    .font(.subheadline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .foregroundColor(.yellow)
+                
+                HStack {
+                    Text(String(format: "Parallax: %.0f", skeletonParallax))
+                        .frame(width: 100, alignment: .leading)
+                    Slider(value: $skeletonParallax, in: -300...300)
+                }
+                Text("値を大きくすると、左は左へ、右は右へ移動し、より奥にあるように見えます。")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
                 
                 Divider().background(Color.white)
                 
@@ -407,7 +476,7 @@ struct USBCameraModeView: View {
             .font(.caption)
             .padding()
         }
-        .frame(width: 340, height: 600)
+        .frame(width: 340, height: 650) // 少し高さを広げました
         .background(Color.black.opacity(0.85))
         .cornerRadius(12)
         .foregroundColor(.white)
@@ -424,7 +493,7 @@ struct USBCameraModeView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .foregroundColor(color)
         
-        Text("1. Camera Video, Scelton Adjustment")
+        Text("1. Camera Video Adjustment")
             .font(.subheadline)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, 5)
@@ -449,7 +518,7 @@ struct USBCameraModeView: View {
         
         Divider().background(Color.white)
         
-        Text("2. Scelton Adjustment")
+        Text("2. Skeleton Transform")
             .font(.subheadline)
             .frame(maxWidth: .infinity, alignment: .leading)
         

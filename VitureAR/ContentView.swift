@@ -68,6 +68,7 @@ struct BackButton: View {
         VStack {
             HStack {
                 Button(action: {
+                    GlassesManager.shared().disconnect()
                     withAnimation { currentMode = .launch }
                 }) {
                     Image(systemName: "chevron.left")
@@ -158,32 +159,5 @@ struct MenuButton: View {
             .cornerRadius(15)
         }
         .buttonStyle(PlainButtonStyle())
-    }
-}
-
-// MARK: - 3. AR Mode
-struct ARModeView: View {
-    @Binding var currentMode: AppState
-    
-    var body: some View {
-        ZStack {
-            Color.black.edgesIgnoringSafeArea(.all)
-            
-            VStack(spacing: 30) {
-                Image(systemName: "hammer.fill")
-                    .font(.system(size: 80))
-                    .foregroundColor(.yellow)
-                
-                Text("AR Mode")
-                    .font(.system(size: 48, weight: .bold))
-                    .foregroundColor(.white)
-                
-                Text("Preparing...")
-                    .font(.title)
-                    .foregroundColor(.gray)
-            }
-            
-            BackButton(currentMode: $currentMode)
-        }
     }
 }

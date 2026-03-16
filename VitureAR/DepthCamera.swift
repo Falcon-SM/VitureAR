@@ -337,11 +337,11 @@ struct ARContentView: View {
         }
         .edgesIgnoringSafeArea(.all)
         .onAppear {
-            if manager?.setupAndConnect() == true {
-                manager?.startStreaming { left, right in
-                    if let leftBuffer = left, let rightBuffer = right {
-                        viewModel.processBuffers(left: leftBuffer, right: rightBuffer)
-                    }
+            if manager.setupAndConnect() == true {
+                manager.startStreaming { left, right in
+                    let leftBuffer = left
+                    let rightBuffer = right
+                    viewModel.processBuffers(left: leftBuffer, right: rightBuffer)
                 }
             } else {
                 print("Failed connecting to VITURE Glasses")
