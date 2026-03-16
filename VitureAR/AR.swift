@@ -9,6 +9,7 @@ typealias SystemColor = UIColor
 import SwiftUI
 import SceneKit
 import simd
+import Combine
 
 // MARK: - SCNView ラッパー
 struct RawSceneView: NSViewRepresentable {
@@ -34,50 +35,44 @@ struct RawSceneView: NSViewRepresentable {
 }
 
 // MARK: - AR Scene Delegate
-//
-// ■ 空間固定の仕組み
-//   SceneKit のカメラは「世界座標の中でどこを向いているか」で決まる。
-//   IMU の姿勢クォータニオンをそのままカメラの orientation に入れると、
-//   頭が右を向いた → カメラが右を向く → 立方体はカメラの左に見える
-//   → 「立方体は世界に固定されたまま、自分が動いた」感覚になる。
-//
-// ■ 位置(x,y,z)は使わない理由
-//   VITURE のIMUのみデバイスでは位置は加速度の二重積分であり、
-//   数秒でドリフトして制御不能になる。
-//   純粋な「回転のみ(3DoF)」で確実に空間固定する。
-//
-// ■ SLERP alpha について
-//   alpha を高く(0.9)することで遅延を最小化する。
-//   低すぎると「カメラが追いかけてくる」感覚になり空間固定に見えない。
-class ARSceneDelegate: NSObject, SCNSceneRendererDelegate {
+class ARSceneDelegate: NSObject, SCNSceneRendererDelegate, ObservableObject {
     var cameraNode: SCNNode?
 
     private let lock     = NSLock()
     private var latestQ  = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
     private var smoothQ  = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
 
-    // 高い alpha = 低遅延 = 空間固定が自然に感じる
-    // 0.9 → 残留誤差が 1/10 になるまで約 2 フレーム (~33ms)
+    private var referenceQ: simd_quatf?
+    private var shouldReset = true
+
     private let ALPHA: Float = 0.9
 
-    // ── 座標系補正 ───────────────────────────────────────────────────
-    // VITURE SDK の "gl_pose" は OpenGL 規約:
-    //   X: 右, Y: 上, Z: 手前 (右手系)
-    // SceneKit も同じ右手系 Y-up なので追加変換は不要なはず。
-    // もし左右・上下・前後が逆に見える場合は下の定数を変えてデバッグ:
-    //   FLIP_X: 左右反転  FLIP_Y: 上下反転  FLIP_Z: 前後反転
-    private let FLIP_X = false
-    private let FLIP_Y = false
-    private let FLIP_Z = false
+    // ── デバッグ＆調整用プロパティ (UIでリアルタイム変更可能) ──
+    @Published var debugRawQ: simd_quatf = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
+    @Published var debugEulerDegrees: simd_float3 = .zero
+    
+    // 空間固定の「激しさ」を調整する倍率（1.0〜3.0などを想定）
+    @Published var rotationMultiplier: Float = 1.5
+    // 近づいた時などに画面が斜めに回ってしまうのを防ぐ（Z軸回転のロック）
+    @Published var lockRoll: Bool = true
+    // 微積分の代わりに人体構造を用いた疑似位置推定（首の付け根を支点にする）
+    @Published var useNeckModel: Bool = true
+
+    override init() {
+        super.init()
+    }
+
+    func recenter() {
+        lock.lock()
+        shouldReset = true
+        lock.unlock()
+    }
 
     func updatePose(qx: Float, qy: Float, qz: Float, qw: Float,
                     x _x: Float, y _y: Float, z _z: Float) {
-        var q = simd_quatf(ix: qx, iy: qy, iz: qz, r: qw)
-
-        // 軸反転が必要な場合はコンポーネントの符号を反転
-        if FLIP_X { q = simd_quatf(ix: -q.imag.x, iy: q.imag.y, iz: q.imag.z, r: q.real) }
-        if FLIP_Y { q = simd_quatf(ix: q.imag.x, iy: -q.imag.y, iz: q.imag.z, r: q.real) }
-        if FLIP_Z { q = simd_quatf(ix: q.imag.x, iy: q.imag.y, iz: -q.imag.z, r: q.real) }
+        
+        // 座標系の90度回転および反転補正
+        let q = simd_quatf(ix: qy, iy: -qx, iz: -qz, r: qw)
 
         lock.lock()
         latestQ = q
@@ -89,15 +84,71 @@ class ARSceneDelegate: NSObject, SCNSceneRendererDelegate {
 
         lock.lock()
         let target = latestQ
+        let doReset = shouldReset
+        let currentMult = rotationMultiplier
+        let doLockRoll = lockRoll
+        let doNeckModel = useNeckModel
+        shouldReset = false
         lock.unlock()
 
-        // SLERP: 前フレームから target へ高速追従
-        smoothQ = simd_slerp(smoothQ, target, ALPHA)
+        // ── 正面リセットの処理 ──
+        if doReset {
+            referenceQ = target.inverse
+            smoothQ = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
+        }
 
-        // ── カメラを回転させる (位置は原点固定) ──
-        // これだけで3DoF空間固定が成立する
+        let relativeQ: simd_quatf
+        if let refQ = referenceQ {
+            relativeQ = refQ * target
+        } else {
+            relativeQ = target
+        }
+
+        // SLERP: 前フレームから target へ高速追従
+        smoothQ = simd_slerp(smoothQ, relativeQ, ALPHA)
+
+        // ── 回転倍率とロール（斜め傾き）ロックの適用 ──
         cam.simdOrientation = smoothQ
-        cam.simdPosition    = .zero
+        var euler = cam.simdEulerAngles
+        
+        // 「もっと激しく動かしたい」に対応するための倍率処理
+        euler.x *= currentMult // 上下（Pitch）の動きを強調
+        euler.y *= currentMult // 左右（Yaw）の動きを強調
+        
+        // 近づいた際に視界が回転してしまうのを防止
+        if doLockRoll {
+            euler.z = 0
+        }
+        
+        cam.simdEulerAngles = euler
+
+        // ── 疑似位置推定 (Neck Model / 人体構造アプローチ) ──
+        // 加速度の2重積分はドリフトですぐに破綻するため、首を支点とした運動学モデルで位置を補完します。
+        // これにより、右を向いた時に単にカメラが回るだけでなく「右後方に移動」するため、空間固定感が強まります。
+        if doNeckModel {
+            // 首の付け根の位置（目から見て下15cm、後ろ10cmあたりを想定）
+            let neckOffset = simd_float3(0, -0.15, -0.10)
+            
+            // 現在のカメラの回転行列を使って、首中心からの眼球の位置を再計算
+            let rotMatrix = simd_matrix3x3(cam.simdOrientation)
+            let rotatedEyePos = rotMatrix * (-neckOffset)
+            
+            // カメラの位置を更新
+            cam.simdPosition = neckOffset + rotatedEyePos
+        } else {
+            cam.simdPosition = .zero
+        }
+
+        // UI用に値を送る
+        let finalEuler = cam.simdEulerAngles
+        DispatchQueue.main.async {
+            self.debugRawQ = target
+            self.debugEulerDegrees = simd_float3(
+                finalEuler.x * 180 / .pi,
+                finalEuler.y * 180 / .pi,
+                finalEuler.z * 180 / .pi
+            )
+        }
     }
 }
 
@@ -107,7 +158,7 @@ struct ARModeView: View {
 
     @State private var scene      = SCNScene()
     @State private var cameraNode = SCNNode()
-    @State private var arDelegate = ARSceneDelegate()
+    @StateObject private var arDelegate = ARSceneDelegate()
 
     var body: some View {
         ZStack {
@@ -120,7 +171,58 @@ struct ARModeView: View {
             )
             .edgesIgnoringSafeArea(.all)
 
-            BackButton(currentMode: $currentMode)
+            // ── デバッグ＆コントロール UI ──
+            VStack(alignment: .leading, spacing: 12) {
+                Text("AR Calibration")
+                    .font(.headline)
+                    .foregroundColor(.green)
+                
+                // カメラのオイラー角 (度数法)
+                Text(String(format: "Cam: P:%.1f°  Y:%.1f°  R:%.1f°",
+                            arDelegate.debugEulerDegrees.x, arDelegate.debugEulerDegrees.y, arDelegate.debugEulerDegrees.z))
+                    .font(.system(.caption, design: .monospaced))
+                
+                // 空間固定の激しさスライダー
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(String(format: "動きの倍率 (Multiplier): %.1fx", arDelegate.rotationMultiplier))
+                        .font(.caption)
+                    Slider(value: $arDelegate.rotationMultiplier, in: 1.0...5.0, step: 0.1)
+                }
+                
+                // 機能トグルスイッチ
+                Toggle("斜め回転を防止 (Roll Lock)", isOn: $arDelegate.lockRoll)
+                    .font(.caption)
+                    .toggleStyle(SwitchToggleStyle(tint: .green))
+                
+                Toggle("首モデル位置推定 (Neck Model)", isOn: $arDelegate.useNeckModel)
+                    .font(.caption)
+                    .toggleStyle(SwitchToggleStyle(tint: .green))
+                
+                Button(action: {
+                    arDelegate.recenter()
+                }) {
+                    Text("Recenter (正面リセット)")
+                        .font(.system(size: 14, weight: .bold))
+                        .padding(8)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.blue.opacity(0.8))
+                        .cornerRadius(8)
+                }
+                .padding(.top, 4)
+            }
+            .foregroundColor(.white)
+            .padding()
+            .frame(width: 260)
+            .background(Color.black.opacity(0.7))
+            .cornerRadius(12)
+            .position(x: 160, y: 180) // 画面左上に配置
+
+            // 元の戻るボタン
+            VStack {
+                Spacer()
+                BackButton(currentMode: $currentMode)
+                    .padding()
+            }
         }
         .onAppear {
             setupScene()
@@ -148,13 +250,13 @@ struct ARModeView: View {
 
     // MARK: - シーン構築
     private func setupScene() {
-
         // ── カメラ ──────────────────────────────────────────────────
         let cam         = SCNCamera()
         cam.zNear       = 0.05
         cam.zFar        = 50.0
-        // 対角 FOV 52° / 16:9 → 垂直 FOV ≈ 27°
-        cam.fieldOfView = 27.0
+        // もしスライダーで倍率を上げても「ズレてる」と感じる場合は、
+        // 物理的なグラスの視野角に合わせてこの値を 20〜45 の間で調整してみてください。
+        cam.fieldOfView = 30.0
         cameraNode.camera       = cam
         cameraNode.simdPosition = .zero
         scene.rootNode.addChildNode(cameraNode)
@@ -162,12 +264,10 @@ struct ARModeView: View {
         scene.background.contents = NSColor.black
 
         // ── 立方体 ───────────────────────────────────────────────────
-        // カメラ正面 2m に 0.4m の立方体
-        // 6面別々の色 → 回り込んで別の面が見えたら空間固定成功の証拠
         let box = SCNBox(width: 0.4, height: 0.4, length: 0.4, chamferRadius: 0.02)
         box.materials = [
-            makeMat(.systemBlue),   // 前面 (正面から見える)
-            makeMat(.systemRed),    // 背面 (後ろに回ると見える)
+            makeMat(.systemBlue),   // 前面
+            makeMat(.systemRed),    // 背面
             makeMat(.systemGreen),  // 上面
             makeMat(.systemOrange), // 下面
             makeMat(.systemYellow), // 左面
