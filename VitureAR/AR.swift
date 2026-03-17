@@ -38,26 +38,28 @@ struct RawSceneView: NSViewRepresentable {
 class ARSceneDelegate: NSObject, SCNSceneRendererDelegate, ObservableObject {
     var cameraNode: SCNNode?
 
-    private let lock     = NSLock()
-    private var latestQ  = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
-    private var smoothQ  = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
+    private let lock = NSLock()
+    
+    // センサーからの最新の生データ
+    private var latestQ = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
+    private var latestP = simd_float3(0, 0, 0)
 
+    // スムージング用
+    private var smoothQ = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
+    private var smoothP = simd_float3(0, 0, 0)
+
+    // リセット（正面固定）の基準点
     private var referenceQ: simd_quatf?
+    private var referenceP: simd_float3 = .zero
     private var shouldReset = true
 
+    // 追従速度 (1.0で遅延なし。少し滑らかにしたい場合は0.8程度に)
     private let ALPHA: Float = 0.9
 
-    // ── デバッグ＆調整用プロパティ (UIでリアルタイム変更可能) ──
-    @Published var debugRawQ: simd_quatf = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
+    // ── デバッグ用プロパティ ──
     @Published var debugEulerDegrees: simd_float3 = .zero
+    @Published var debugPosition: simd_float3 = .zero
     
-    // 空間固定の「激しさ」を調整する倍率（1.0〜3.0などを想定）
-    @Published var rotationMultiplier: Float = 1.5
-    // 近づいた時などに画面が斜めに回ってしまうのを防ぐ（Z軸回転のロック）
-    @Published var lockRoll: Bool = true
-    // 微積分の代わりに人体構造を用いた疑似位置推定（首の付け根を支点にする）
-    @Published var useNeckModel: Bool = true
-
     override init() {
         super.init()
     }
@@ -68,14 +70,15 @@ class ARSceneDelegate: NSObject, SCNSceneRendererDelegate, ObservableObject {
         lock.unlock()
     }
 
-    func updatePose(qx: Float, qy: Float, qz: Float, qw: Float,
-                    x _x: Float, y _y: Float, z _z: Float) {
-        
-        // 座標系の90度回転および反転補正
-        let q = simd_quatf(ix: qy, iy: -qx, iz: -qz, r: qw)
+    // 引数の順序を Objective-C 側 (x, y, z, qw, qx, qy, qz) と完全に一致させました
+    func updatePose(x: Float, y: Float, z: Float, qw: Float, qx: Float, qy: Float, qz: Float) {
+        // GL Pose (右手座標系) をそのまま SceneKit (右手座標系) にマッピング
+        let q = simd_quatf(ix: qx, iy: qy, iz: qz, r: qw)
+        let p = simd_float3(x, y, z)
 
         lock.lock()
         latestQ = q
+        latestP = p
         lock.unlock()
     }
 
@@ -83,71 +86,52 @@ class ARSceneDelegate: NSObject, SCNSceneRendererDelegate, ObservableObject {
         guard let cam = cameraNode else { return }
 
         lock.lock()
-        let target = latestQ
+        let targetQ = latestQ
+        let targetP = latestP
         let doReset = shouldReset
-        let currentMult = rotationMultiplier
-        let doLockRoll = lockRoll
-        let doNeckModel = useNeckModel
         shouldReset = false
         lock.unlock()
-
+        
         // ── 正面リセットの処理 ──
         if doReset {
-            referenceQ = target.inverse
+            referenceQ = targetQ.inverse // 現在の姿勢を打ち消す逆回転
+            referenceP = targetP         // 現在の位置を原点とする
             smoothQ = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
+            smoothP = .zero
         }
 
         let relativeQ: simd_quatf
+        let relativeP: simd_float3
+        
         if let refQ = referenceQ {
-            relativeQ = refQ * target
+            // 回転：初期姿勢を基準にした相対回転
+            relativeQ = refQ * targetQ
+            
+            // 位置：現実世界での移動差分を、向いている方向（初期姿勢）に合わせて回転させる
+            let rawDeltaP = targetP - referenceP
+            relativeP = refQ.act(rawDeltaP)
         } else {
-            relativeQ = target
+            relativeQ = targetQ
+            relativeP = targetP
         }
 
-        // SLERP: 前フレームから target へ高速追従
+        // SLERPとLERPによるスムージング
         smoothQ = simd_slerp(smoothQ, relativeQ, ALPHA)
+        smoothP = smoothP + (relativeP - smoothP) * ALPHA
 
-        // ── 回転倍率とロール（斜め傾き）ロックの適用 ──
+        // ── 空間固定の鉄則：加工せず1:1で適用する ──
         cam.simdOrientation = smoothQ
-        var euler = cam.simdEulerAngles
-        
-        // 「もっと激しく動かしたい」に対応するための倍率処理
-        euler.x *= currentMult // 上下（Pitch）の動きを強調
-        euler.y *= currentMult // 左右（Yaw）の動きを強調
-        
-        // 近づいた際に視界が回転してしまうのを防止
-        if doLockRoll {
-            euler.z = 0
-        }
-        
-        cam.simdEulerAngles = euler
-
-        // ── 疑似位置推定 (Neck Model / 人体構造アプローチ) ──
-        // 加速度の2重積分はドリフトですぐに破綻するため、首を支点とした運動学モデルで位置を補完します。
-        // これにより、右を向いた時に単にカメラが回るだけでなく「右後方に移動」するため、空間固定感が強まります。
-        if doNeckModel {
-            // 首の付け根の位置（目から見て下15cm、後ろ10cmあたりを想定）
-            let neckOffset = simd_float3(0, -0.15, -0.10)
-            
-            // 現在のカメラの回転行列を使って、首中心からの眼球の位置を再計算
-            let rotMatrix = simd_matrix3x3(cam.simdOrientation)
-            let rotatedEyePos = rotMatrix * (-neckOffset)
-            
-            // カメラの位置を更新
-            cam.simdPosition = neckOffset + rotatedEyePos
-        } else {
-            cam.simdPosition = .zero
-        }
+        cam.simdPosition = smoothP
 
         // UI用に値を送る
         let finalEuler = cam.simdEulerAngles
         DispatchQueue.main.async {
-            self.debugRawQ = target
             self.debugEulerDegrees = simd_float3(
                 finalEuler.x * 180 / .pi,
                 finalEuler.y * 180 / .pi,
                 finalEuler.z * 180 / .pi
             )
+            self.debugPosition = self.smoothP
         }
     }
 }
@@ -173,30 +157,19 @@ struct ARModeView: View {
 
             // ── デバッグ＆コントロール UI ──
             VStack(alignment: .leading, spacing: 12) {
-                Text("AR Calibration")
+                Text("AR Tracking: 6DoF")
                     .font(.headline)
                     .foregroundColor(.green)
                 
                 // カメラのオイラー角 (度数法)
-                Text(String(format: "Cam: P:%.1f°  Y:%.1f°  R:%.1f°",
+                Text(String(format: "Rot: P:%.1f°  Y:%.1f°  R:%.1f°",
                             arDelegate.debugEulerDegrees.x, arDelegate.debugEulerDegrees.y, arDelegate.debugEulerDegrees.z))
                     .font(.system(.caption, design: .monospaced))
                 
-                // 空間固定の激しさスライダー
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(String(format: "動きの倍率 (Multiplier): %.1fx", arDelegate.rotationMultiplier))
-                        .font(.caption)
-                    Slider(value: $arDelegate.rotationMultiplier, in: 1.0...5.0, step: 0.1)
-                }
-                
-                // 機能トグルスイッチ
-                Toggle("斜め回転を防止 (Roll Lock)", isOn: $arDelegate.lockRoll)
-                    .font(.caption)
-                    .toggleStyle(SwitchToggleStyle(tint: .green))
-                
-                Toggle("首モデル位置推定 (Neck Model)", isOn: $arDelegate.useNeckModel)
-                    .font(.caption)
-                    .toggleStyle(SwitchToggleStyle(tint: .green))
+                // カメラの位置 (メートル)
+                Text(String(format: "Pos: X:%.2f  Y:%.2f  Z:%.2f",
+                            arDelegate.debugPosition.x, arDelegate.debugPosition.y, arDelegate.debugPosition.z))
+                    .font(.system(.caption, design: .monospaced))
                 
                 Button(action: {
                     arDelegate.recenter()
@@ -215,14 +188,15 @@ struct ARModeView: View {
             .frame(width: 260)
             .background(Color.black.opacity(0.7))
             .cornerRadius(12)
-            .position(x: 160, y: 180) // 画面左上に配置
+            .position(x: 160, y: 150) // 画面左上に配置
 
-            // 元の戻るボタン
-            VStack {
+            // 元の戻るボタン (App state management assumed)
+            /* VStack {
                 Spacer()
                 BackButton(currentMode: $currentMode)
                     .padding()
             }
+            */
         }
         .onAppear {
             setupScene()
@@ -242,9 +216,10 @@ struct ARModeView: View {
     private func startIMU() {
         let mgr = GlassesManager.shared()
         _ = mgr.setupAndConnect()
-        mgr.startPosePolling { qx, qy, qz, qw, x, y, z in
-            self.arDelegate.updatePose(qx: qx, qy: qy, qz: qz, qw: qw,
-                                       x: x,  y: y,  z: z)
+        
+        // ★修正点：引数の受け取り順序をObj-C側に合わせました
+        mgr.startPosePolling { x, y, z, qw, qx, qy, qz in
+            self.arDelegate.updatePose(x: x, y: y, z: z, qw: qw, qx: qx, qy: qy, qz: qz)
         }
     }
 
@@ -254,9 +229,9 @@ struct ARModeView: View {
         let cam         = SCNCamera()
         cam.zNear       = 0.05
         cam.zFar        = 50.0
-        // もしスライダーで倍率を上げても「ズレてる」と感じる場合は、
-        // 物理的なグラスの視野角に合わせてこの値を 20〜45 の間で調整してみてください。
-        cam.fieldOfView = 30.0
+        // グラスの物理的な視野角(FOV)に合わせます。
+        // ※もし空間固定時に「首を振ると箱が少し滑る」と感じる場合は、ここの数値を 30.0 ~ 45.0 の間で調整してください。
+        cam.fieldOfView = 35.0
         cameraNode.camera       = cam
         cameraNode.simdPosition = .zero
         scene.rootNode.addChildNode(cameraNode)
