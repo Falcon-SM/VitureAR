@@ -1,5 +1,5 @@
 import Foundation
-import AVFoundation
+internal import AVFoundation
 import SwiftUI
 import Combine
 import Vision
@@ -43,10 +43,41 @@ class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
         }
     }
     
+    private func getVITUREcamera() -> AVCaptureDevice? {
+        let deviceTypes: [AVCaptureDevice.DeviceType]
+        let position: AVCaptureDevice.Position
+        
+        deviceTypes = [.external, .builtInWideAngleCamera]
+        position = .unspecified
+        let discoverySession = AVCaptureDevice.DiscoverySession(
+                    deviceTypes: deviceTypes,
+                    mediaType: .video,
+                    position: position
+        )
+        let devices = discoverySession.devices
+        if let externalCamera = devices.first(where: {
+                    if #available(macOS 14.0, *) {
+                        return $0.deviceType == .external
+                    } else {
+                        return $0.deviceType == .externalUnknown || $0.localizedName.localizedCaseInsensitiveContains("USB")
+                    }
+                }) {
+                    print("📷 外付けカメラを選択しました: \(externalCamera.localizedName)")
+                    return externalCamera
+                }
+        if let builtInCamera = devices.first(where: { $0.deviceType == .builtInWideAngleCamera }) {
+                    print("USB Camera not found: \(builtInCamera.localizedName)")
+                    return builtInCamera
+                }
+                return nil
+        
+    }
+    
     private func setupCamera() {
         session.beginConfiguration()
         
-        guard let device = AVCaptureDevice.default(for: .video) else {
+        guard let device = getVITUREcamera() else {
+            print("Camera Not Found")
             session.commitConfiguration()
             return
         }

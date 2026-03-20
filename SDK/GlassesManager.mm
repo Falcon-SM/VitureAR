@@ -74,7 +74,7 @@ static void GlobalCameraCallback(char* image_left0, char* image_right0,
 }
 
 - (BOOL)setupAndConnect {
-    if (_handle) return YES; // 既に接続済みの場合はスキップ
+    if (_handle) return YES;
 
     int pid = detectViturePID();
     if (pid == 0) {
@@ -92,7 +92,7 @@ static void GlobalCameraCallback(char* image_left0, char* image_right0,
     _deviceType = xr_device_provider_get_device_type(_handle);
     NSLog(@"[GlassesManager] Detected Device Type ID: %d", _deviceType);
     
-    // コールバックの登録 (Carinaの場合)
+    // Callback (Carina)
     if (_deviceType == XR_DEVICE_TYPE_VITURE_CARINA) {
         NSLog(@"[GlassesManager] Device recognized as Carina. Registering Carina callbacks...");
         xr_device_provider_register_callbacks_carina(_handle, nullptr, nullptr, nullptr, GlobalCameraCallback);
@@ -107,7 +107,6 @@ static void GlobalCameraCallback(char* image_left0, char* image_right0,
         return NO;
     }
     
-    // ★修正ポイント: start() の「前」に解像度を変更する（USBカメラの仕様上、ストリーム開始前に設定する必要がある場合が多いため）
     NSLog(@"[GlassesManager] Setting display mode to 3840x1200 (3D Mode) BEFORE start...");
     int modeRes = xr_device_provider_set_display_mode(_handle, VITURE_DISPLAY_MODE_3840_1200_90HZ);
     NSLog(@"[GlassesManager] Display mode switch result: %d (0 = Success)", modeRes);
