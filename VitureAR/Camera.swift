@@ -276,7 +276,7 @@ struct USBCameraModeView: View {
         }
         .onAppear {
             cameraManager.checkPermissions()
-            GlassesManager.shared().setupAndConnect()
+            // GlassesManager.shared().setupAndConnect()
         }
         .onDisappear {
             cameraManager.session.stopRunning()

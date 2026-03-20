@@ -1,11 +1,6 @@
-#if os(macOS)
 import AppKit
 internal import AVFoundation
 typealias SystemColor = NSColor
-#else
-import UIKit
-typealias SystemColor = UIColor
-#endif
 
 import SwiftUI
 import SceneKit
@@ -36,46 +31,44 @@ struct RawSceneView: NSViewRepresentable {
 // MARK: - AR Scene Delegate
 class ARSceneDelegate: NSObject, SCNSceneRendererDelegate, ObservableObject {
     var headNode: SCNNode?
-    var leftCameraNode: SCNNode?
-    var rightCameraNode: SCNNode?
+    var cameraNode: SCNNode?
     
-    // ── ハンドトラッキング連動用 ──
+    // Hand Tracking
     var cameraManager: CameraManager?
-    
-    // 単一のBoxではなく、複数のインタラクト可能なノードを管理する配列
+
     var targetNodes: [SCNNode] = []
     
-    // 手のジョイントとボーンを管理
+    // Hands
     private var leftJointNodes: [VNHumanHandPoseObservation.JointName: SCNNode] = [:]
     private var rightJointNodes: [VNHumanHandPoseObservation.JointName: SCNNode] = [:]
     private var leftBoneNodes: [SCNNode] = []
     private var rightBoneNodes: [SCNNode] = []
     
-    // ── レーザーポインター用ノード ──
+    // LASER
     private var leftLaserNode: SCNNode?
     private var rightLaserNode: SCNNode?
 
     private let lock = NSLock()
-    private var latestQ = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
-    private var latestP = simd_float3(0, 0, 0)
+    private var imuQ = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1) // latest → imu RAW DATA
+    private var imuP = simd_float3(0, 0, 0)
     private var smoothQ = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
     private var smoothP = simd_float3(0, 0, 0)
+    private let ALPHA: Float = 0.99 // 0.9 How much to use latest imu data and keep old data
+    
+    // 基準点
     private var referenceQ: simd_quatf?
     private var referenceP: simd_float3 = .zero
     private var shouldReset = true
-    private let ALPHA: Float = 0.9
 
     // ── パラメータ群 ──
-    @Published var ipd: Float = 0.050
     @Published var fieldOfView: CGFloat = 46.0 {
         didSet {
-            leftCameraNode?.camera?.fieldOfView = fieldOfView
-            rightCameraNode?.camera?.fieldOfView = fieldOfView
+            cameraNode?.camera?.fieldOfView = fieldOfView
         }
     }
     @Published var debugPosition: simd_float3 = .zero
     
-    // ハンドトラッキング用調整パラメータ
+    // Adjust Hand Tracking
     @Published var handScaleX: Float = 1.55
     @Published var handScaleY: Float = 1.55
     @Published var handOffsetX: Float = 0.0
@@ -84,8 +77,6 @@ class ARSceneDelegate: NSObject, SCNSceneRendererDelegate, ObservableObject {
     @Published var handDepthMultiplier: Float = 0.025
     @Published var jointRadius: CGFloat = 0.006
     @Published var boneRadius: CGFloat = 0.003
-    
-    private var smoothConvergenceDist: Float = 10.0
 
     private let fingers: [[VNHumanHandPoseObservation.JointName]] = [
         [.wrist, .thumbCMC, .thumbMP, .thumbIP, .thumbTip],
@@ -109,20 +100,19 @@ class ARSceneDelegate: NSObject, SCNSceneRendererDelegate, ObservableObject {
         let q = simd_quatf(ix: qx, iy: qy, iz: qz, r: qw)
         let p = simd_float3(x, y, z)
         lock.lock()
-        latestQ = q
-        latestP = p
+        imuQ = q
+        imuP = p
         lock.unlock()
     }
 
     func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
         guard let head = headNode,
-              let leftCam = leftCameraNode,
-              let rightCam = rightCameraNode else { return }
+              let camera = cameraNode else { return }
 
-        // 頭の姿勢更新
+        // Update Head Position
         lock.lock()
-        let targetQ = latestQ
-        let targetP = latestP
+        let targetQ = imuQ
+        let targetP = imuP
         let doReset = shouldReset
         shouldReset = false
         lock.unlock()
@@ -142,37 +132,10 @@ class ARSceneDelegate: NSObject, SCNSceneRendererDelegate, ObservableObject {
 
         head.simdOrientation = smoothQ
         head.simdPosition = smoothP
-
-        // 自動輻輳
-        let headWorldPos = head.simdWorldPosition
-        let localForward = simd_float4(0, 0, -1, 0)
-        let worldForwardVec = head.simdWorldTransform * localForward
-        let headForward = normalize(simd_float3(worldForwardVec.x, worldForwardVec.y, worldForwardVec.z))
         
-        var targetDist: Float = 10.0
-        if let scene = renderer.scene {
-            let endPos = headWorldPos + headForward * 50.0
-            let hits = scene.rootNode.hitTestWithSegment(
-                from: SCNVector3(headWorldPos),
-                to: SCNVector3(endPos),
-                options: [SCNHitTestOption.firstFoundOnly.rawValue: true, SCNHitTestOption.ignoreHiddenNodes.rawValue: true]
-            )
-            if let firstHit = hits.first {
-                let hitPos = simd_float3(firstHit.worldCoordinates)
-                targetDist = max(0.15, simd_distance(headWorldPos, hitPos))
-            }
-        }
-
-        smoothConvergenceDist = smoothConvergenceDist + (targetDist - smoothConvergenceDist) * 0.1
-        let halfIPD = self.ipd / 2.0
+        // 自動輻輳は削除ずみ
         
-        leftCam.simdPosition = simd_float3(-halfIPD, 0, 0)
-        rightCam.simdPosition = simd_float3(halfIPD, 0, 0)
-        let angle = atan2(halfIPD, smoothConvergenceDist)
-        leftCam.simdEulerAngles = simd_float3(0, angle, 0)
-        rightCam.simdEulerAngles = simd_float3(0, -angle, 0)
-
-        // ハンドトラッキングの更新
+        // Update Hand Tracking
         updateHandTracking(fov: Float(fieldOfView), scene: renderer.scene)
 
         DispatchQueue.main.async {
@@ -425,8 +388,7 @@ struct ARModeView: View {
 
     @State private var scene = SCNScene()
     @State private var headNode = SCNNode()
-    @State private var leftCameraNode = SCNNode()
-    @State private var rightCameraNode = SCNNode()
+    @State private var cameraNode = SCNNode()
     
     @StateObject private var arDelegate = ARSceneDelegate()
     @StateObject private var cameraManager = CameraManager()
@@ -436,14 +398,8 @@ struct ARModeView: View {
     var body: some View {
         ZStack {
             Color.black.edgesIgnoringSafeArea(.all)
-
-            HStack(spacing: 0) {
-                RawSceneView(scene: scene, cameraNode: leftCameraNode, delegate: arDelegate)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                
-                RawSceneView(scene: scene, cameraNode: rightCameraNode, delegate: nil)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+            RawSceneView(scene: scene, cameraNode: cameraNode, delegate: arDelegate)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             .edgesIgnoringSafeArea(.all)
 
             if showSettings {
@@ -473,8 +429,7 @@ struct ARModeView: View {
         .onAppear {
             setupScene()
             arDelegate.headNode = headNode
-            arDelegate.leftCameraNode = leftCameraNode
-            arDelegate.rightCameraNode = rightCameraNode
+            arDelegate.cameraNode = cameraNode
             arDelegate.cameraManager = cameraManager
             
             startIMU()
@@ -508,12 +463,6 @@ struct ARModeView: View {
                     }.buttonStyle(PlainButtonStyle())
                     
                     Divider().background(Color.gray)
-                    
-                    Group {
-                        Text("Glasses Display").font(.subheadline).foregroundColor(.yellow)
-                        sliderRow(title: "IPD", value: $arDelegate.ipd, range: 0.000...0.075, format: "%.3f m")
-                        sliderRow(title: "FOV (Horizontal)", value: $arDelegate.fieldOfView, range: 20.0...80.0, format: "%.1f°")
-                    }
                     
                     Divider().background(Color.gray)
                     
@@ -564,7 +513,7 @@ struct ARModeView: View {
 
     private func startIMU() {
         let mgr = GlassesManager.shared()
-        _ = mgr.setupAndConnect()
+         _ = mgr.setupAndConnect()
         mgr.startPosePolling { x, y, z, qw, qx, qy, qz in
             self.arDelegate.updatePose(x: x, y: y, z: z, qw: qw, qx: qx, qy: qy, qz: qz)
         }
@@ -574,19 +523,12 @@ struct ARModeView: View {
         headNode.simdPosition = .zero
         scene.rootNode.addChildNode(headNode)
 
-        let leftCam = SCNCamera()
-        leftCam.zNear = 0.05
-        leftCam.zFar = 50.0
-        leftCam.fieldOfView = arDelegate.fieldOfView
-        leftCameraNode.camera = leftCam
-        headNode.addChildNode(leftCameraNode)
-
-        let rightCam = SCNCamera()
-        rightCam.zNear = 0.05
-        rightCam.zFar = 50.0
-        rightCam.fieldOfView = arDelegate.fieldOfView
-        rightCameraNode.camera = rightCam
-        headNode.addChildNode(rightCameraNode)
+        let camera = SCNCamera()
+        camera.zNear = 0.05
+        camera.zFar = 50.0
+        camera.fieldOfView = arDelegate.fieldOfView
+        cameraNode.camera = camera
+        headNode.addChildNode(cameraNode)
 
         scene.background.contents = NSColor.black
 
@@ -612,12 +554,7 @@ struct ARModeView: View {
             arDelegate.targetNodes.append(boxNode)
         }
         
-        /* ── ★ Blender等のカスタムモデルを表示する方法 ──
-         
-         1. Blenderでモデルを作成し、`.dae` (Collada) 形式でエクスポートするか、
-            `.glb` 形式でエクスポートしてMacの Reality Converter 等で `.usdz` に変換します。
-         2. Xcodeのプロジェクトナビゲータにそのファイル（例: `MyModel.scn` や `MyModel.usdz`）をドラッグ＆ドロップします。
-         3. 以下のコードのコメントアウトを解除して読み込みます。*/
+        // Blender Custom Model
          
         if let customScene = SCNScene(named: "animal.usdz"),
            let customNode = customScene.rootNode.childNodes.first {
