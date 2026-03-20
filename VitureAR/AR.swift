@@ -42,16 +42,13 @@ class ARSceneDelegate: NSObject, SCNSceneRendererDelegate, ObservableObject {
     // ── ハンドトラッキング連動用 ──
     var cameraManager: CameraManager?
     
-    // 単一のBoxではなく、複数のインタラクト可能なノードを管理する配列
     var targetNodes: [SCNNode] = []
     
-    // 手のジョイントとボーンを管理
     private var leftJointNodes: [VNHumanHandPoseObservation.JointName: SCNNode] = [:]
     private var rightJointNodes: [VNHumanHandPoseObservation.JointName: SCNNode] = [:]
     private var leftBoneNodes: [SCNNode] = []
     private var rightBoneNodes: [SCNNode] = []
     
-    // ── レーザーポインター用ノード ──
     private var leftLaserNode: SCNNode?
     private var rightLaserNode: SCNNode?
 
@@ -63,10 +60,15 @@ class ARSceneDelegate: NSObject, SCNSceneRendererDelegate, ObservableObject {
     private var referenceQ: simd_quatf?
     private var referenceP: simd_float3 = .zero
     private var shouldReset = true
-    private let ALPHA: Float = 0.9
+    
+    // 改善点③: 遅延をなくし、Swim現象（空間の滑り）を防ぐため1.0に変更。
+    // もしIMUのブレが気になる場合のみ、0.95などに少し下げてください。
+        private let ALPHA: Float = 0.4
 
     // ── パラメータ群 ──
-    @Published var ipd: Float = 0.050
+    @Published var ipd: Float = 0.063 { // 初期値を63mmに変更
+        didSet { updateCameraPositions() }
+    }
     @Published var fieldOfView: CGFloat = 46.0 {
         didSet {
             leftCameraNode?.camera?.fieldOfView = fieldOfView
@@ -74,6 +76,9 @@ class ARSceneDelegate: NSObject, SCNSceneRendererDelegate, ObservableObject {
         }
     }
     @Published var debugPosition: simd_float3 = .zero
+    
+    // 改善点⑤: 現実の移動量とVRの移動量が合わない場合のスケール調整用
+    @Published var positionScale: Float = 1.0
     
     // ハンドトラッキング用調整パラメータ
     @Published var handScaleX: Float = 1.55
@@ -85,8 +90,6 @@ class ARSceneDelegate: NSObject, SCNSceneRendererDelegate, ObservableObject {
     @Published var jointRadius: CGFloat = 0.006
     @Published var boneRadius: CGFloat = 0.003
     
-    private var smoothConvergenceDist: Float = 10.0
-
     private let fingers: [[VNHumanHandPoseObservation.JointName]] = [
         [.wrist, .thumbCMC, .thumbMP, .thumbIP, .thumbTip],
         [.wrist, .indexMCP, .indexPIP, .indexDIP, .indexTip],
@@ -113,11 +116,28 @@ class ARSceneDelegate: NSObject, SCNSceneRendererDelegate, ObservableObject {
         latestP = p
         lock.unlock()
     }
+    
+    // 改善点①: カメラの位置（IPD）を更新する。輻輳（寄り目）はさせず常に平行に保つ。
+    func updateCameraPositions() {
+        let halfIPD = ipd / 2.0
+        leftCameraNode?.simdPosition = simd_float3(-halfIPD, 0, 0)
+        rightCameraNode?.simdPosition = simd_float3(halfIPD, 0, 0)
+        leftCameraNode?.simdEulerAngles = .zero
+        rightCameraNode?.simdEulerAngles = .zero
+    }
+
+    // 改善点②: 重力軸を維持するため、QuaternionからYaw(Y軸回転)のみを抽出する関数
+    private func getYawRotation(from q: simd_quatf) -> simd_quatf {
+        // Zマイナス方向のベクトルを回転させ、XZ平面での角度を計算
+        let forward = q.act(simd_float3(0, 0, -1))
+        let yaw = atan2(forward.x, -forward.z)
+        return simd_quatf(angle: yaw, axis: simd_float3(0, 1, 0))
+    }
 
     func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
         guard let head = headNode,
-              let leftCam = leftCameraNode,
-              let rightCam = rightCameraNode else { return }
+              let _ = leftCameraNode,
+              let _ = rightCameraNode else { return }
 
         // 頭の姿勢更新
         lock.lock()
@@ -128,49 +148,26 @@ class ARSceneDelegate: NSObject, SCNSceneRendererDelegate, ObservableObject {
         lock.unlock()
         
         if doReset {
-            referenceQ = targetQ.inverse
+            // 改善点②: PitchやRollまでリセットすると歩行時に斜めに進んでしまうため、Yawのみをリセットする
+            let yawQ = getYawRotation(from: targetQ)
+            referenceQ = yawQ.inverse
             referenceP = targetP
             smoothQ = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
             smoothP = .zero
         }
 
         let relativeQ = referenceQ.map { $0 * targetQ } ?? targetQ
-        let relativeP = referenceQ.map { $0.act(targetP - referenceP) } ?? targetP
+        
+        // 改善点⑤: 現実の移動距離とスケールが合わない場合の補正
+        let scaledTargetP = targetP * positionScale
+        let scaledReferenceP = referenceP * positionScale
+        let relativeP = referenceQ.map { $0.act(scaledTargetP - scaledReferenceP) } ?? scaledTargetP
 
         smoothQ = simd_slerp(smoothQ, relativeQ, ALPHA)
         smoothP = smoothP + (relativeP - smoothP) * ALPHA
 
         head.simdOrientation = smoothQ
         head.simdPosition = smoothP
-
-        // 自動輻輳
-        let headWorldPos = head.simdWorldPosition
-        let localForward = simd_float4(0, 0, -1, 0)
-        let worldForwardVec = head.simdWorldTransform * localForward
-        let headForward = normalize(simd_float3(worldForwardVec.x, worldForwardVec.y, worldForwardVec.z))
-        
-        var targetDist: Float = 10.0
-        if let scene = renderer.scene {
-            let endPos = headWorldPos + headForward * 50.0
-            let hits = scene.rootNode.hitTestWithSegment(
-                from: SCNVector3(headWorldPos),
-                to: SCNVector3(endPos),
-                options: [SCNHitTestOption.firstFoundOnly.rawValue: true, SCNHitTestOption.ignoreHiddenNodes.rawValue: true]
-            )
-            if let firstHit = hits.first {
-                let hitPos = simd_float3(firstHit.worldCoordinates)
-                targetDist = max(0.15, simd_distance(headWorldPos, hitPos))
-            }
-        }
-
-        smoothConvergenceDist = smoothConvergenceDist + (targetDist - smoothConvergenceDist) * 0.1
-        let halfIPD = self.ipd / 2.0
-        
-        leftCam.simdPosition = simd_float3(-halfIPD, 0, 0)
-        rightCam.simdPosition = simd_float3(halfIPD, 0, 0)
-        let angle = atan2(halfIPD, smoothConvergenceDist)
-        leftCam.simdEulerAngles = simd_float3(0, angle, 0)
-        rightCam.simdEulerAngles = simd_float3(0, -angle, 0)
 
         // ハンドトラッキングの更新
         updateHandTracking(fov: Float(fieldOfView), scene: renderer.scene)
@@ -188,7 +185,6 @@ class ARSceneDelegate: NSObject, SCNSceneRendererDelegate, ObservableObject {
         leftLaserNode?.isHidden = true
         rightLaserNode?.isHidden = true
         
-        // 複数ノードのうち、現在ヒットしているものを記録するSet
         var hitNodes: Set<SCNNode> = []
         
         for hand in hands {
@@ -257,7 +253,7 @@ class ARSceneDelegate: NSObject, SCNSceneRendererDelegate, ObservableObject {
                 leftBoneNodes = currentBoneNodes
             }
             
-            // ── 3. ピンチジェスチャー＆レーザービーム判定（手首からのベクトル） ──
+            // 3. ピンチジェスチャー＆レーザービーム判定
             var isPinching = false
             if let thumb2D = hand.joints[.thumbTip], let index2D = hand.joints[.indexTip] {
                 let dx = thumb2D.x - index2D.x
@@ -268,13 +264,11 @@ class ARSceneDelegate: NSObject, SCNSceneRendererDelegate, ObservableObject {
             if isPinching,
                let thumb3D = joint3DPositions[.thumbTip],
                let index3D = joint3DPositions[.indexTip],
-               let wrist3D = joint3DPositions[.wrist] { // 手首の座標を取得
+               let wrist3D = joint3DPositions[.wrist] {
                 
                 let pinchMid = (thumb3D + index3D) / 2.0
-                
-                // ★手首から指先（ピンチ位置）へ向かうベクトルを計算し、レーザーの向きとする
                 let laserDir = normalize(pinchMid - wrist3D)
-                let maxLaserDist: Float = 50.0 // ★50メートル先まで届く長いレーザー
+                let maxLaserDist: Float = 50.0
                 
                 let localStart = pinchMid
                 var localEnd = pinchMid + laserDir * maxLaserDist
@@ -293,10 +287,8 @@ class ARSceneDelegate: NSObject, SCNSceneRendererDelegate, ObservableObject {
                         let hitPos = simd_float3(firstHit.worldCoordinates)
                         let dist = simd_distance(simd_float3(worldStart.x, worldStart.y, worldStart.z), hitPos)
                         
-                        // ヒットした場所でレーザーを止める
                         localEnd = pinchMid + laserDir * dist
                         
-                        // ヒットしたノードがターゲットリストに含まれているか確認
                         if targetNodes.contains(firstHit.node) {
                             hitNodes.insert(firstHit.node)
                         }
@@ -308,12 +300,11 @@ class ARSceneDelegate: NSObject, SCNSceneRendererDelegate, ObservableObject {
                 updateBoneNode(laserNode!, from: localStart, to: localEnd, radius: 0.002)
             }
             
-            // ── 4. 直接触った場合の当たり判定 ──
+            // 4. 直接触った場合の当たり判定
             if let indexTipPos = joint3DPositions[.indexTip] {
                 let worldPos = headNode!.simdWorldTransform * simd_float4(indexTipPos.x, indexTipPos.y, indexTipPos.z, 1.0)
                 let cursorPos = simd_float3(worldPos.x, worldPos.y, worldPos.z)
                 
-                // 複数のオブジェクトそれぞれとの距離を測る
                 for node in targetNodes {
                     if simd_distance(cursorPos, node.simdWorldPosition) < 0.08 {
                         hitNodes.insert(node)
@@ -322,7 +313,7 @@ class ARSceneDelegate: NSObject, SCNSceneRendererDelegate, ObservableObject {
             }
         }
         
-        // ── 色の更新（触られているものは緑、それ以外は赤） ──
+        // 色の更新
         for node in targetNodes {
             if hitNodes.contains(node) {
                 node.geometry?.firstMaterial?.diffuse.contents = SystemColor.systemGreen
@@ -477,6 +468,9 @@ struct ARModeView: View {
             arDelegate.rightCameraNode = rightCameraNode
             arDelegate.cameraManager = cameraManager
             
+            // 初期のIPDオフセットを適用
+            arDelegate.updateCameraPositions()
+            
             startIMU()
             cameraManager.checkPermissions()
         }
@@ -513,6 +507,7 @@ struct ARModeView: View {
                         Text("Glasses Display").font(.subheadline).foregroundColor(.yellow)
                         sliderRow(title: "IPD", value: $arDelegate.ipd, range: 0.000...0.075, format: "%.3f m")
                         sliderRow(title: "FOV (Horizontal)", value: $arDelegate.fieldOfView, range: 20.0...80.0, format: "%.1f°")
+                        sliderRow(title: "Pos Scale", value: $arDelegate.positionScale, range: 0.1...10.0, format: "%.2f")
                     }
                     
                     Divider().background(Color.gray)
@@ -574,9 +569,11 @@ struct ARModeView: View {
         headNode.simdPosition = .zero
         scene.rootNode.addChildNode(headNode)
 
+        // 改善点④: ウィンドウサイズに影響されないよう、projectionDirectionでFOVの方向を固定
         let leftCam = SCNCamera()
         leftCam.zNear = 0.05
         leftCam.zFar = 50.0
+        leftCam.projectionDirection = .horizontal
         leftCam.fieldOfView = arDelegate.fieldOfView
         leftCameraNode.camera = leftCam
         headNode.addChildNode(leftCameraNode)
@@ -584,52 +581,34 @@ struct ARModeView: View {
         let rightCam = SCNCamera()
         rightCam.zNear = 0.05
         rightCam.zFar = 50.0
+        rightCam.projectionDirection = .horizontal
         rightCam.fieldOfView = arDelegate.fieldOfView
         rightCameraNode.camera = rightCam
         headNode.addChildNode(rightCameraNode)
 
         scene.background.contents = NSColor.black
 
-        // ── ★ 複数の立方体を配置 ──
-        let positions: [simd_float3] = [
-            simd_float3( 0.0, -0.1, -0.6), // 正面
-            simd_float3( 0.4,  0.2, -0.8), // 右上
-            simd_float3(-0.4,  0.0, -0.7), // 左
-            simd_float3( 0.2, -0.3, -1.0)  // 右下奥
+        let shapesData: [(pos: simd_float3, geometry: SCNGeometry, color: SystemColor)] = [
+            // 箱
+            (simd_float3(-0.6, 0.0, -2.0), SCNBox(width: 0.3, height: 0.3, length: 0.3, chamferRadius: 0.01), .systemRed),
+            // 球体
+            (simd_float3( 0.0, 0.0, -2.0), SCNSphere(radius: 0.2), .systemBlue),
+            // 円柱
+            (simd_float3( 0.6, 0.0, -2.0), SCNCylinder(radius: 0.15, height: 0.4), .systemGreen)
         ]
-        
-        for pos in positions {
-            let box = SCNBox(width: 0.12, height: 0.12, length: 0.12, chamferRadius: 0.01)
-            let mat = SCNMaterial()
-            mat.diffuse.contents = SystemColor.systemRed
-            box.materials = [mat]
-            
-            let boxNode = SCNNode(geometry: box)
-            boxNode.simdPosition = pos
-            scene.rootNode.addChildNode(boxNode)
-            
-            // 操作対象の配列に追加
-            arDelegate.targetNodes.append(boxNode)
-        }
-        
-        /* ── ★ Blender等のカスタムモデルを表示する方法 ──
-         
-         1. Blenderでモデルを作成し、`.dae` (Collada) 形式でエクスポートするか、
-            `.glb` 形式でエクスポートしてMacの Reality Converter 等で `.usdz` に変換します。
-         2. Xcodeのプロジェクトナビゲータにそのファイル（例: `MyModel.scn` や `MyModel.usdz`）をドラッグ＆ドロップします。
-         3. 以下のコードのコメントアウトを解除して読み込みます。*/
-         
-        if let customScene = SCNScene(named: "animal.usdz"),
-           let customNode = customScene.rootNode.childNodes.first {
-    
-            customNode.simdPosition = simd_float3(0, 0, -1.5)
-            customNode.scale = SCNVector3(0.5, 0.5, 0.5)
-            
-            scene.rootNode.addChildNode(customNode)
-            arDelegate.targetNodes.append(customNode) // レーザーで撃てるように配列に追加
-        }
-        
 
+        for item in shapesData {
+            let mat = SCNMaterial()
+            mat.diffuse.contents = item.color
+            item.geometry.materials = [mat]
+            
+            let node = SCNNode(geometry: item.geometry)
+            node.simdPosition = item.pos
+            scene.rootNode.addChildNode(node)
+            
+            arDelegate.targetNodes.append(node)
+        }
+        
         // 照明
         let ambient = SCNLight()
         ambient.type = .ambient
