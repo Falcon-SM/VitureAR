@@ -569,7 +569,6 @@ struct ARModeView: View {
         headNode.simdPosition = .zero
         scene.rootNode.addChildNode(headNode)
 
-        // 改善点④: ウィンドウサイズに影響されないよう、projectionDirectionでFOVの方向を固定
         let leftCam = SCNCamera()
         leftCam.zNear = 0.05
         leftCam.zFar = 50.0
