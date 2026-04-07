@@ -48,6 +48,7 @@ struct RawARView: NativeViewRepresentable {
 // MARK: - AR Mode View (SwiftUI)
 struct ARModeView: View {
     @Binding var currentMode: AppState
+    @EnvironmentObject private var calibration: CalibrationViewModel
 
     // 分離した2つのコーディネーターと、カメラマネージャーを用意
     @StateObject private var spacialCoordinator = SpacialCoordinator()
@@ -98,6 +99,24 @@ struct ARModeView: View {
             handCoordinator.cameraManager = cameraManager
             startIMU()
             cameraManager.checkPermissions()
+            
+            // Sync initial hand transform from shared calibration (use left params as shared source)
+            handCoordinator.handScaleX = Float(calibration.leftParams.scaleX)
+            handCoordinator.handScaleY = Float(calibration.leftParams.scaleY)
+            handCoordinator.handOffsetX = Float(calibration.leftParams.offsetX)
+            handCoordinator.handOffsetY = Float(calibration.leftParams.offsetY)
+        }
+        .onChange(of: calibration.leftParams.scaleX) { oldValue, newValue in
+            handCoordinator.handScaleX = Float(newValue)
+        }
+        .onChange(of: calibration.leftParams.scaleY) { oldValue, newValue in
+            handCoordinator.handScaleY = Float(newValue)
+        }
+        .onChange(of: calibration.leftParams.offsetX) { oldValue, newValue in
+            handCoordinator.handOffsetX = Float(newValue)
+        }
+        .onChange(of: calibration.leftParams.offsetY) { oldValue, newValue in
+            handCoordinator.handOffsetY = Float(newValue)
         }
         .onDisappear {
             cameraManager.session.stopRunning()
@@ -140,11 +159,7 @@ struct ARModeView: View {
                     
                     Group {
                         Text("Hand Transform").font(.subheadline).foregroundColor(.yellow)
-                        // HandTrackingCoordinatorのパラメータに繋ぎます
-                        sliderRow(title: "Scale X", value: $handCoordinator.handScaleX, range: 0.1...3.0, format: "%.2f")
-                        sliderRow(title: "Scale Y", value: $handCoordinator.handScaleY, range: 0.1...3.0, format: "%.2f")
-                        sliderRow(title: "Offset X", value: $handCoordinator.handOffsetX, range: -1.0...1.0, format: "%.2f")
-                        sliderRow(title: "Offset Y", value: $handCoordinator.handOffsetY, range: -1.0...1.0, format: "%.2f")
+                        Text("Calibrated in USB Camera mode").font(.caption).foregroundColor(.gray)
                     }
                     
                     Divider().background(Color.gray)
@@ -195,3 +210,4 @@ struct ARModeView: View {
         }
     }
 }
+

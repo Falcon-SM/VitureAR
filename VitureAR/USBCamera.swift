@@ -1,10 +1,11 @@
 import SwiftUI
+import Combine
 internal import AVFoundation
 import Vision
 import AppKit
 
 // MARK: - 調整用パラメータ
-struct CalibrationParams {
+struct CalibrationParams: Codable {
     var videoScale: CGFloat = 1.90
     var videoOffsetX: CGFloat = 0
     var videoOffsetY: CGFloat = -368
@@ -13,6 +14,66 @@ struct CalibrationParams {
     var offsetY: CGFloat = 0
     var scaleX: CGFloat = 1.0
     var scaleY: CGFloat = 1.0
+
+    var leftParallax: CGFloat = -11.0
+    var rightParallax: CGFloat = 10.0
+}
+
+private enum CalibrationKeys {
+    static let left = "calibration.leftParams"
+    static let right = "calibration.rightParams"
+}
+
+final class CalibrationViewModel: ObservableObject {
+    @Published var leftParams = CalibrationParams(videoOffsetX: 207) {
+        didSet { save() }
+    }
+    @Published var rightParams = CalibrationParams(videoOffsetX: -176) {
+        didSet { save() }
+    }
+
+    init() {
+        load()
+    }
+
+    private func save() {
+        let encoder = JSONEncoder()
+        if let leftData = try? encoder.encode(leftParams) {
+            UserDefaults.standard.set(leftData, forKey: CalibrationKeys.left)
+        }
+        if let rightData = try? encoder.encode(rightParams) {
+            UserDefaults.standard.set(rightData, forKey: CalibrationKeys.right)
+        }
+    }
+
+    private func load() {
+        let decoder = JSONDecoder()
+        if let leftData = UserDefaults.standard.data(forKey: CalibrationKeys.left),
+           let decodedLeft = try? decoder.decode(CalibrationParams.self, from: leftData) {
+            leftParams = decodedLeft
+        }
+        if let rightData = UserDefaults.standard.data(forKey: CalibrationKeys.right),
+           let decodedRight = try? decoder.decode(CalibrationParams.self, from: rightData) {
+            rightParams = decodedRight
+        }
+    }
+    
+    func resetHandTransforms() {
+        // Left
+        leftParams.offsetX = 0
+        leftParams.offsetY = 0
+        leftParams.scaleX = 1
+        leftParams.scaleY = 1
+        leftParams.leftParallax = 0
+        // Right
+        rightParams.offsetX = 0
+        rightParams.offsetY = 0
+        rightParams.scaleX = 1
+        rightParams.scaleY = 1
+        rightParams.rightParallax = 0
+        // Save after resetting
+        save()
+    }
 }
 
 // MARK: - メインの調整用ビュー
@@ -20,10 +81,7 @@ struct USBCameraModeView: View {
     @Binding var currentMode: AppState
     
     @StateObject private var cameraManager = CameraManager()
-    
-    @State private var leftParams = CalibrationParams(videoOffsetX: 176)
-    @State private var rightParams = CalibrationParams(videoOffsetX: -176)
-    @State private var skeletonParallax: CGFloat = 10.0
+    @StateObject private var calibration = CalibrationViewModel()
     @State private var showSettings = true
 
     var body: some View {
@@ -32,8 +90,8 @@ struct USBCameraModeView: View {
             
             // SBS (サイドバイサイド) 画面
             HStack(spacing: 0) {
-                eyeView(params: leftParams, isLeft: true)
-                eyeView(params: rightParams, isLeft: false)
+                eyeView(params: calibration.leftParams, isLeft: true)
+                eyeView(params: calibration.rightParams, isLeft: false)
             }
             .edgesIgnoringSafeArea(.all)
             
@@ -83,7 +141,7 @@ struct USBCameraModeView: View {
             
             // 手の骨格描画 (HandTracking.swift の HandSkeletonView を呼び出し)
             ForEach(cameraManager.hands) { hand in
-                let currentParallax = isLeft ? -skeletonParallax : skeletonParallax
+                let currentParallax = isLeft ? -calibration.leftParams.leftParallax : calibration.rightParams.rightParallax
                 
                 HandSkeletonView(
                     joints: hand.joints,
@@ -114,12 +172,12 @@ struct USBCameraModeView: View {
                 Group {
                     Text("Video Offset X").foregroundColor(.yellow)
                     HStack {
-                        Text("Left: \(Int(leftParams.videoOffsetX))")
-                        Slider(value: $leftParams.videoOffsetX, in: -500...500)
+                        Text("Left: \(Int(calibration.leftParams.videoOffsetX))")
+                        Slider(value: $calibration.leftParams.videoOffsetX, in: -500...500)
                     }
                     HStack {
-                        Text("Right: \(Int(rightParams.videoOffsetX))")
-                        Slider(value: $rightParams.videoOffsetX, in: -500...500)
+                        Text("Right: \(Int(calibration.rightParams.videoOffsetX))")
+                        Slider(value: $calibration.rightParams.videoOffsetX, in: -500...500)
                     }
                 }
                 
@@ -128,8 +186,12 @@ struct USBCameraModeView: View {
                 Group {
                     Text("Hand Depth Parallax").foregroundColor(.yellow)
                     HStack {
-                        Text("\(Int(skeletonParallax))")
-                        Slider(value: $skeletonParallax, in: -100...100)
+                        Text("Left: \(Int(calibration.leftParams.leftParallax))")
+                        Slider(value: $calibration.leftParams.leftParallax, in: -100...100)
+                    }
+                    HStack {
+                        Text("Right: \(Int(calibration.rightParams.rightParallax))")
+                        Slider(value: $calibration.rightParams.rightParallax, in: -100...100)
                     }
                 }
                 
@@ -141,29 +203,35 @@ struct USBCameraModeView: View {
                     // 左右で同じスケール・オフセットを共有して調整
                     HStack {
                         Text("Scale X/Y:")
-                        Slider(value: $leftParams.scaleX, in: 0.1...3.0)
+                        Slider(value: $calibration.leftParams.scaleX, in: 0.1...3.0)
                             // ⚠️警告修正: 新しい onChange の構文
-                            .onChange(of: leftParams.scaleX) { oldValue, newValue in
-                                rightParams.scaleX = newValue
-                                rightParams.scaleY = newValue
-                                leftParams.scaleY = newValue
+                            .onChange(of: calibration.leftParams.scaleX) { oldValue, newValue in
+                                calibration.rightParams.scaleX = newValue
+                                calibration.rightParams.scaleY = newValue
+                                calibration.leftParams.scaleY = newValue
                             }
                     }
                     HStack {
                         Text("Offset X:")
-                        Slider(value: $leftParams.offsetX, in: -500...500)
-                            .onChange(of: leftParams.offsetX) { oldValue, newValue in
-                                rightParams.offsetX = newValue
+                        Slider(value: $calibration.leftParams.offsetX, in: -500...500)
+                            .onChange(of: calibration.leftParams.offsetX) { oldValue, newValue in
+                                calibration.rightParams.offsetX = newValue
                             }
                     }
                     HStack {
                         Text("Offset Y:")
-                        Slider(value: $leftParams.offsetY, in: -500...500)
-                            .onChange(of: leftParams.offsetY) { oldValue, newValue in
-                                rightParams.offsetY = newValue
+                        Slider(value: $calibration.leftParams.offsetY, in: -500...500)
+                            .onChange(of: calibration.leftParams.offsetY) { oldValue, newValue in
+                                calibration.rightParams.offsetY = newValue
                             }
                     }
                 }
+                
+                Button("Reset to Vision (no transforms)") {
+                    calibration.resetHandTransforms()
+                }
+                .buttonStyle(PlainButtonStyle())
+                .padding(.top, 4)
                 
                 Button("Close Panel") {
                     withAnimation { showSettings = false }
@@ -215,3 +283,4 @@ class VideoPreviewNativeView: NSView {
         previewLayer.frame = self.bounds
     }
 }
+
