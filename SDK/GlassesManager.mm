@@ -157,7 +157,7 @@ static void GlobalCameraCallback(char* image_left0, char* image_right0,
 }
 
 - (void)posePollingLoop {
-    const int interval_ms = 10; // 100Hz
+    const int interval_ms = 12; // 100Hz
     auto next_time = std::chrono::steady_clock::now();
     
     float pose[7] = {0};
