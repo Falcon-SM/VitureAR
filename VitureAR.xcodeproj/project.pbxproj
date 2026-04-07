@@ -8,10 +8,10 @@
 
 /* Begin PBXBuildFile section */
 		7466C8812F641BD800E5BDFA /* GlassesManager.mm in Sources */ = {isa = PBXBuildFile; fileRef = 7466C8802F641BD800E5BDFA /* GlassesManager.mm */; };
-		749219732F5C0D0E00F8BAF2 /* libglasses.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 7492196B2F5C0D0E00F8BAF2 /* libglasses.dylib */; };
-		749219742F5C0D0E00F8BAF2 /* libcarina_vio.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 7492196A2F5C0D0E00F8BAF2 /* libcarina_vio.dylib */; };
-		749219752F5C0D7900F8BAF2 /* libcarina_vio.dylib in Embed Libraries */ = {isa = PBXBuildFile; fileRef = 7492196A2F5C0D0E00F8BAF2 /* libcarina_vio.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
-		749219772F5C0D7A00F8BAF2 /* libglasses.dylib in Embed Libraries */ = {isa = PBXBuildFile; fileRef = 7492196B2F5C0D0E00F8BAF2 /* libglasses.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		749794122F853A3A003EF664 /* libglasses.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 749794112F853A3A003EF664 /* libglasses.dylib */; };
+		749794132F853A3A003EF664 /* libcarina_vio.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 749794102F853A3A003EF664 /* libcarina_vio.dylib */; };
+		749794142F853D35003EF664 /* libcarina_vio.dylib in Embed Libraries */ = {isa = PBXBuildFile; fileRef = 749794102F853A3A003EF664 /* libcarina_vio.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		749794152F853D36003EF664 /* libglasses.dylib in Embed Libraries */ = {isa = PBXBuildFile; fileRef = 749794112F853A3A003EF664 /* libglasses.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -21,8 +21,8 @@
 			dstPath = "";
 			dstSubfolderSpec = 10;
 			files = (
-				749219752F5C0D7900F8BAF2 /* libcarina_vio.dylib in Embed Libraries */,
-				749219772F5C0D7A00F8BAF2 /* libglasses.dylib in Embed Libraries */,
+				749794142F853D35003EF664 /* libcarina_vio.dylib in Embed Libraries */,
+				749794152F853D36003EF664 /* libglasses.dylib in Embed Libraries */,
 			);
 			name = "Embed Libraries";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -34,14 +34,15 @@
 		7466C8802F641BD800E5BDFA /* GlassesManager.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = GlassesManager.mm; sourceTree = "<group>"; };
 		7466C8822F641BDC00E5BDFA /* VitureAR-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "VitureAR-Bridging-Header.h"; sourceTree = "<group>"; };
 		749219692F5C0D0E00F8BAF2 /* hidapi.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = hidapi.h; sourceTree = "<group>"; };
-		7492196A2F5C0D0E00F8BAF2 /* libcarina_vio.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; path = libcarina_vio.dylib; sourceTree = "<group>"; };
-		7492196B2F5C0D0E00F8BAF2 /* libglasses.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; path = libglasses.dylib; sourceTree = "<group>"; };
-		7492196C2F5C0D0E00F8BAF2 /* viture_device.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = viture_device.h; sourceTree = "<group>"; };
-		7492196D2F5C0D0E00F8BAF2 /* viture_device_carina.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = viture_device_carina.h; sourceTree = "<group>"; };
-		7492196E2F5C0D0E00F8BAF2 /* viture_glasses_provider.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = viture_glasses_provider.h; sourceTree = "<group>"; };
-		7492196F2F5C0D0E00F8BAF2 /* viture_macros_public.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = viture_macros_public.h; sourceTree = "<group>"; };
-		749219702F5C0D0E00F8BAF2 /* viture_protocol_public.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = viture_protocol_public.h; sourceTree = "<group>"; };
-		749219712F5C0D0E00F8BAF2 /* viture_version.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = viture_version.h; sourceTree = "<group>"; };
+		749794092F853A10003EF664 /* viture_device.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = viture_device.h; sourceTree = "<group>"; };
+		7497940A2F853A10003EF664 /* viture_device_carina.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = viture_device_carina.h; sourceTree = "<group>"; };
+		7497940B2F853A10003EF664 /* viture_glasses_provider.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = viture_glasses_provider.h; sourceTree = "<group>"; };
+		7497940C2F853A10003EF664 /* viture_macros_public.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = viture_macros_public.h; sourceTree = "<group>"; };
+		7497940D2F853A10003EF664 /* viture_protocol_public.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = viture_protocol_public.h; sourceTree = "<group>"; };
+		7497940E2F853A10003EF664 /* viture_result.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = viture_result.h; sourceTree = "<group>"; };
+		7497940F2F853A10003EF664 /* viture_version.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = viture_version.h; sourceTree = "<group>"; };
+		749794102F853A3A003EF664 /* libcarina_vio.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; path = libcarina_vio.dylib; sourceTree = "<group>"; };
+		749794112F853A3A003EF664 /* libglasses.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; path = libglasses.dylib; sourceTree = "<group>"; };
 		74F995B02F5C0AFF00051D35 /* VitureAR.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VitureAR.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -58,8 +59,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				749219732F5C0D0E00F8BAF2 /* libglasses.dylib in Frameworks */,
-				749219742F5C0D0E00F8BAF2 /* libcarina_vio.dylib in Frameworks */,
+				749794122F853A3A003EF664 /* libglasses.dylib in Frameworks */,
+				749794132F853A3A003EF664 /* libcarina_vio.dylib in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -70,15 +71,16 @@
 			isa = PBXGroup;
 			children = (
 				749219692F5C0D0E00F8BAF2 /* hidapi.h */,
-				7492196A2F5C0D0E00F8BAF2 /* libcarina_vio.dylib */,
-				7492196B2F5C0D0E00F8BAF2 /* libglasses.dylib */,
-				7492196C2F5C0D0E00F8BAF2 /* viture_device.h */,
-				7492196D2F5C0D0E00F8BAF2 /* viture_device_carina.h */,
-				7492196E2F5C0D0E00F8BAF2 /* viture_glasses_provider.h */,
-				7492196F2F5C0D0E00F8BAF2 /* viture_macros_public.h */,
-				749219702F5C0D0E00F8BAF2 /* viture_protocol_public.h */,
-				749219712F5C0D0E00F8BAF2 /* viture_version.h */,
 				7466C87F2F641B9400E5BDFA /* GlassesManager.h */,
+				749794092F853A10003EF664 /* viture_device.h */,
+				749794102F853A3A003EF664 /* libcarina_vio.dylib */,
+				749794112F853A3A003EF664 /* libglasses.dylib */,
+				7497940A2F853A10003EF664 /* viture_device_carina.h */,
+				7497940B2F853A10003EF664 /* viture_glasses_provider.h */,
+				7497940C2F853A10003EF664 /* viture_macros_public.h */,
+				7497940D2F853A10003EF664 /* viture_protocol_public.h */,
+				7497940E2F853A10003EF664 /* viture_result.h */,
+				7497940F2F853A10003EF664 /* viture_version.h */,
 				7466C8802F641BD800E5BDFA /* GlassesManager.mm */,
 				7466C8822F641BDC00E5BDFA /* VitureAR-Bridging-Header.h */,
 			);
@@ -345,6 +347,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/SDK",
 				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Shun.VitureAR;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -396,6 +399,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/SDK",
 				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Shun.VitureAR;
 				PRODUCT_NAME = "$(TARGET_NAME)";

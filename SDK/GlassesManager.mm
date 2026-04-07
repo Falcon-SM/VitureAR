@@ -100,7 +100,8 @@ static void GlobalCameraCallback(char* image_left0, char* image_right0,
         NSLog(@"[GlassesManager] Device is NOT Carina. Callbacks might need different registration.");
     }
     
-    if (xr_device_provider_initialize(_handle) != 0) {
+    // SDK Updated: added nullptr
+    if (xr_device_provider_initialize(_handle, nullptr, nullptr) != 0) {
         NSLog(@"[GlassesManager] [Error] Failed to initialize device provider.");
         xr_device_provider_destroy(_handle);
         _handle = nullptr;
@@ -176,6 +177,54 @@ static void GlobalCameraCallback(char* image_left0, char* image_right0,
         std::this_thread::sleep_until(next_time);
     }
 }
+
+#pragma mark - Device Control Methods (Added)
+
+- (BOOL)setVolume:(int)volume {
+    if (!_handle) return NO;
+    
+    // 0〜8の範囲内にクリップする
+    if (volume < 0) volume = 0;
+    if (volume > 8) volume = 8;
+    
+    int result = xr_device_provider_set_volume_level(_handle, volume);
+    if (result != 0) {
+        NSLog(@"[GlassesManager] [Error] Failed to set volume: %d", result);
+        return NO;
+    }
+    return YES;
+}
+
+- (BOOL)setBrightness:(int)brightness {
+    if (!_handle) return NO;
+    
+    // 0〜8の範囲内にクリップする
+    if (brightness < 0) brightness = 0;
+    if (brightness > 8) brightness = 8;
+    
+    int result = xr_device_provider_set_brightness_level(_handle, brightness);
+    if (result != 0) {
+        NSLog(@"[GlassesManager] [Error] Failed to set brightness: %d", result);
+        return NO;
+    }
+    return YES;
+}
+
+- (BOOL)setFilmMode:(BOOL)isOn {
+    if (!_handle) return NO;
+    
+    // 【新仕様】float値で指定 (オン: 1.0f, オフ: 0.0f)
+    float voltage = isOn ? 1.0f : 0.0f;
+    int result = xr_device_provider_set_film_mode(_handle, voltage);
+    
+    if (result != 0) {
+        NSLog(@"[GlassesManager] [Error] Failed to set film mode: %d", result);
+        return NO;
+    }
+    return YES;
+}
+
+#pragma mark - Cleanup & Processing
 
 - (void)disconnect {
     if (!_handle) return;
