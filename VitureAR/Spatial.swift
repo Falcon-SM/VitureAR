@@ -58,47 +58,62 @@ class SpacialCoordinator: ObservableObject {
         reset = true
         lock.unlock()
     }
-
+    
     func setup() {
-            guard let lv = leftView, let rv = rightView else { return }
+        guard let lv = leftView, let rv = rightView else { return }
+        
+        lv.scene.anchors.removeAll()
+        rv.scene.anchors.removeAll()
+        
+        func configure(_ view: ARView, _ head: Entity, _ cam: PerspectiveCamera) {
+            let anchor = AnchorEntity(world: .zero)
+            view.environment.background = .color(.black) // または .darkGray など
             
-            // 既存のコンテンツを完全にクリア
-            lv.scene.anchors.removeAll()
-            rv.scene.anchors.removeAll()
+            view.environment.lighting.intensityExponent = 1.0
             
-            // 最小限のコンテンツを作成する関数
-            func configure(_ view: ARView, _ head: Entity, _ cam: PerspectiveCamera) {
-                let anchor = AnchorEntity(world: .zero)
-                
-                // 1. 環境光のみ（影なし・計算負荷最小）
-                let ambient = DirectionalLight()
-                ambient.light.intensity = 1000
-                anchor.addChild(ambient)
-                
-                // 2. シンプルな色の球体（UnlitMaterial: 光源計算なしで描画が速い）
-                let mesh = MeshResource.generateSphere(radius: 0.1)
-                let material = UnlitMaterial(color: .systemBlue)
-                let sphere = ModelEntity(mesh: mesh, materials: [material])
-                sphere.position = [0, 0, -0.5]
-                anchor.addChild(sphere)
-                
-                // 3. カメラの組み立て
-                head.children.removeAll() // 二重追加防止
-                head.addChild(cam)
-                anchor.addChild(head)
-                
-                view.scene.addAnchor(anchor)
-                cam.camera.fieldOfViewInDegrees = Float(fieldOfView)
-            }
+            let sun = DirectionalLight()
+            sun.light.intensity = 15000
+            sun.light.color = .white
+            sun.shadow = DirectionalLightComponent.Shadow()
             
-            configure(lv, leftHead, leftCamera)
-            configure(rv, rightHead, rightCamera)
+            let sunEntity = Entity()
+            sunEntity.orientation = simd_quatf(angle: .pi * 0.25, axis: [1, 0, 0]) * simd_quatf(angle: .pi * -0.25, axis: [0, 1, 0])
+            sunEntity.addChild(sun)
+            anchor.addChild(sunEntity)
+
+            let mesh = MeshResource.generateSphere(radius: 0.1)
+            var pbr = PhysicallyBasedMaterial()
             
-            updateIPD()
+            // 色の指定をシンプルに修正
+            pbr.baseColor = .init(tint: .blue)
+            pbr.metallic = 0.9
+            pbr.roughness = 0.1
+            pbr.clearcoat = 0.6
+            pbr.clearcoatRoughness = 0.05
             
-            subscription?.cancel()
-            subscription = lv.scene.subscribe(to: SceneEvents.Update.self) { [weak self] _ in self?.onUpdate() }
+            let sphere = ModelEntity(mesh: mesh, materials: [pbr])
+            sphere.position = [0, 0, -0.5] // カメラの前方50cm
+            anchor.addChild(sphere)
+            
+            // 3. カメラの組み立て
+            head.children.removeAll() // 二重追加防止
+            head.addChild(cam)
+            anchor.addChild(head)
+            
+            view.scene.addAnchor(anchor)
+            cam.camera.fieldOfViewInDegrees = Float(fieldOfView)
         }
+        
+        configure(lv, leftHead, leftCamera)
+        configure(rv, rightHead, rightCamera)
+        
+        updateIPD()
+        
+        subscription?.cancel()
+        subscription = lv.scene.subscribe(to: SceneEvents.Update.self) { [weak self] _ in
+            self?.onUpdate()
+        }
+    }
         
     
     private func updateIPD() {
@@ -142,3 +157,4 @@ class SpacialCoordinator: ObservableObject {
         }
     }
 }
+

@@ -11,7 +11,7 @@ enum AppState {
 
 struct ContentView: View {
     @State private var currentMode: AppState = .launch
-    
+    @StateObject private var calibration = CalibrationViewModel()
     var body: some View {
         ZStack {
             switch currentMode {
@@ -25,6 +25,7 @@ struct ContentView: View {
                 ARModeView(currentMode: $currentMode)
             }
         }
+        .environmentObject(calibration)
     }
 }
 
