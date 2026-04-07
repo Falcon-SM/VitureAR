@@ -29,11 +29,15 @@ class SpacialCoordinator: ObservableObject {
     private var reset =  true
     private var subscription: Cancellable?
     private var referenceQ = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
+    private var referenceP = simd_float3(0, 0, 0)
+    
+    @Published var neckOffsetY: Float = 0.15
+    @Published var neckOffsetZ: Float = -0.08
     
     @Published var ipd: Float = 0.063 {
         didSet { updateIPD() }
     }
-    @Published var fieldOfView: CGFloat = 46.0 {
+    @Published var fieldOfView: CGFloat = 32.8 {
             didSet {
                 leftCamera.camera.fieldOfViewInDegrees = Float(fieldOfView)
                 rightCamera.camera.fieldOfViewInDegrees = Float(fieldOfView)
@@ -54,25 +58,48 @@ class SpacialCoordinator: ObservableObject {
         reset = true
         lock.unlock()
     }
-    
+
     func setup() {
-        guard let lv = leftView, let rv = rightView else { return }
-        
-        func configure(_ view: ARView, _ head: Entity, _ cam: PerspectiveCamera) {
-            let anchor = AnchorEntity(world: .zero) // Center
-            head.addChild(cam)
-            anchor.addChild(head)
-            view.scene.addAnchor(anchor)
-            cam.camera.fieldOfViewInDegrees = 46
+            guard let lv = leftView, let rv = rightView else { return }
+            
+            // 既存のコンテンツを完全にクリア
+            lv.scene.anchors.removeAll()
+            rv.scene.anchors.removeAll()
+            
+            // 最小限のコンテンツを作成する関数
+            func configure(_ view: ARView, _ head: Entity, _ cam: PerspectiveCamera) {
+                let anchor = AnchorEntity(world: .zero)
+                
+                // 1. 環境光のみ（影なし・計算負荷最小）
+                let ambient = DirectionalLight()
+                ambient.light.intensity = 1000
+                anchor.addChild(ambient)
+                
+                // 2. シンプルな色の球体（UnlitMaterial: 光源計算なしで描画が速い）
+                let mesh = MeshResource.generateSphere(radius: 0.1)
+                let material = UnlitMaterial(color: .systemBlue)
+                let sphere = ModelEntity(mesh: mesh, materials: [material])
+                sphere.position = [0, 0, -0.5]
+                anchor.addChild(sphere)
+                
+                // 3. カメラの組み立て
+                head.children.removeAll() // 二重追加防止
+                head.addChild(cam)
+                anchor.addChild(head)
+                
+                view.scene.addAnchor(anchor)
+                cam.camera.fieldOfViewInDegrees = Float(fieldOfView)
+            }
+            
+            configure(lv, leftHead, leftCamera)
+            configure(rv, rightHead, rightCamera)
+            
+            updateIPD()
+            
+            subscription?.cancel()
+            subscription = lv.scene.subscribe(to: SceneEvents.Update.self) { [weak self] _ in self?.onUpdate() }
         }
         
-        configure(lv, leftHead, leftCamera)
-        configure(rv, rightHead, rightCamera)
-        
-        updateIPD()
-        
-        subscription = lv.scene.subscribe(to: SceneEvents.Update.self) { [weak  self] _ in self?.onUpdate() }
-    }
     
     private func updateIPD() {
         let halfIPD = ipd / 2.0
@@ -92,16 +119,26 @@ class SpacialCoordinator: ObservableObject {
             let forward = q.act(simd_float3(0, 0, -1))
             let yaw = atan2(forward.x, -forward.z)
             referenceQ = simd_quatf(angle: yaw, axis: [0, 1, 0]).inverse
+            referenceP = p
         }
         
         let targetQ = referenceQ * q
+        let rawRelativeP = p - referenceP
+        let rotatedRelativeP = referenceQ.act(rawRelativeP)
+        let targetP = rotatedRelativeP * positionScale
         
-        let smoothQ = simd_slerp(leftHead.orientation, targetQ, 0.4)
-        leftHead.orientation = smoothQ
-        rightHead.orientation = smoothQ
+        let neckOffset = simd_float3(0, neckOffsetY, neckOffsetZ)
+        let eyeMovement = targetQ.act(neckOffset) - neckOffset
+        let finalP = targetP + eyeMovement
         
-        let smoothP = leftHead.position + (p - leftHead.position) * 0.4
-        leftHead.position = smoothP
-        rightHead.position = smoothP
+        leftHead.orientation = targetQ
+        rightHead.orientation = targetQ
+        
+        leftHead.position = finalP
+        rightHead.position = finalP
+        
+        DispatchQueue.main.async {
+            self.debugPosition = targetP
+        }
     }
 }

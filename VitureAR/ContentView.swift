@@ -1,38 +1,6 @@
 import SwiftUI
 internal import AVFoundation
 
-/*
- struct ContentView: View {
- @StateObject private var cameraManager = CameraManager()
- 
- var body: some View {
- ZStack {
- Color.black.edgesIgnoringSafeArea(.all)
- 
- // 【変更】hands配列の中身をForEachで回して、見つかった数だけ描画する
- if !cameraManager.hands.isEmpty {
- ForEach(0..<cameraManager.hands.count, id: \.self) { index in
- HandSkeletonView(joints: cameraManager.hands[index])
- }
- } else {
- Text("手をカメラに向けてください")
- .foregroundColor(.gray)
- .font(.title2)
- }
- }
- .frame(minWidth: 640, minHeight: 480)
- .onAppear {
- cameraManager.checkPermissions()
- }
- .onDisappear {
- cameraManager.session.stopRunning()
- }
- }
- }
- */
-
-import SwiftUI
-
 // MARK: - App Status
 enum AppState {
     case launch

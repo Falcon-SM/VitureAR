@@ -429,7 +429,7 @@ class HandTrackingCoordinator: ObservableObject {
         for (index, pair) in targets.enumerated() {
             let isHit = hitTargetIndices.contains(index)
             let color: SystemColor = isHit ? .systemGreen : .systemRed
-            var mat = UnlitMaterial(color: color)
+            let mat = UnlitMaterial(color: color)
             pair.left.model?.materials = [mat]
             pair.right.model?.materials = [mat]
         }

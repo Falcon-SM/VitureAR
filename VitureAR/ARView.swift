@@ -23,12 +23,7 @@ struct RawARView: NativeViewRepresentable {
     #endif
     
     private func makeView() -> ARView {
-        // AR機能をオフにした純粋な3Dビューとして初期化
-        #if os(macOS)
         let arView = ARView(frame: .zero)
-        #else
-        let arView = ARView(frame: .zero, cameraMode: .nonAR, automaticallyConfigureSession: false)
-        #endif
         arView.environment.background = .color(SystemColor.black)
         
         // 左右のViewをSpacialCoordinatorに登録

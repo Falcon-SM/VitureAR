@@ -86,7 +86,7 @@ struct USBCameraModeView: View {
                 let currentParallax = isLeft ? -skeletonParallax : skeletonParallax
                 
                 HandSkeletonView(
-                    joints: hand.joints, // ⚠️警告修正: 強制キャスト(as!)を削除
+                    joints: hand.joints,
                     isRight: hand.isRight,
                     offsetX: params.offsetX + currentParallax,
                     offsetY: params.offsetY,
