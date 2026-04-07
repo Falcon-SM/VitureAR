@@ -1,6 +1,7 @@
 SDK/*
 !SDK/GlassesManager.h
 !SDK/GlassesManager.mm
+!SDK/VitureAR-Bridging-Header.h
 
 VitureAR.xcodeproj/xcuserdata/
 VitureAR.xcodeproj/project.xcworkspace/xcuserdata/
