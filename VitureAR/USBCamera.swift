@@ -284,3 +284,68 @@ class VideoPreviewNativeView: NSView {
     }
 }
 
+struct HandSkeletonView: View {
+    var joints: [HandJoint: CGPoint]
+    var isRight: Bool
+    
+    var offsetX: CGFloat
+    var offsetY: CGFloat
+    var scaleX: CGFloat
+    var scaleY: CGFloat
+    var lineWidth: CGFloat
+    var jointSize: CGFloat
+    
+    let fingers: [[HandJoint]] = [
+        [.wrist, .thumbCMC, .thumbMP, .thumbIP, .thumbTip],
+        [.wrist, .indexMCP, .indexPIP, .indexDIP, .indexTip],
+        [.wrist, .middleMCP, .middlePIP, .middleDIP, .middleTip],
+        [.wrist, .ringMCP, .ringPIP, .ringDIP, .ringTip],
+        [.wrist, .littleMCP, .littlePIP, .littleDIP, .littleTip]
+    ]
+    
+    var handColor: Color { return isRight ? .orange : .cyan }
+    var glowColor: Color { return isRight ? .red : .blue }
+    
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Path { path in
+                    for finger in fingers {
+                        var isFirstPoint = true
+                        for jointName in finger {
+                            if let normalizedPoint = joints[jointName] {
+                                let point = CGPoint(
+                                    x: (normalizedPoint.x * geometry.size.width * scaleX) + offsetX,
+                                    y: (normalizedPoint.y * geometry.size.height * scaleY) + offsetY
+                                )
+                                if isFirstPoint {
+                                    path.move(to: point)
+                                    isFirstPoint = false
+                                } else {
+                                    path.addLine(to: point)
+                                }
+                            }
+                        }
+                    }
+                }
+                .stroke(handColor, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
+                .shadow(color: handColor, radius: 8, x: 0, y: 0)
+                .shadow(color: glowColor, radius: 15, x: 0, y: 0)
+                
+                ForEach(Array(joints.keys), id: \.self) { jointName in
+                    if let normalizedPoint = joints[jointName] {
+                        let point = CGPoint(
+                            x: (normalizedPoint.x * geometry.size.width * scaleX) + offsetX,
+                            y: (normalizedPoint.y * geometry.size.height * scaleY) + offsetY
+                        )
+                        Circle()
+                            .fill(Color.white)
+                            .frame(width: jointSize, height: jointSize)
+                            .position(point)
+                            .shadow(color: handColor, radius: 5)
+                    }
+                }
+            }
+        }
+    }
+}
