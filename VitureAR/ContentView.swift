@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 internal import AVFoundation
 
 // MARK: - App Status
@@ -12,6 +13,10 @@ enum AppState {
 struct ContentView: View {
     @State private var currentMode: AppState = .launch
     @StateObject private var calibration = CalibrationViewModel()
+    
+    let screenChange = NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
+    let targetScreenName = "VITURE"
+    
     var body: some View {
         ZStack {
             switch currentMode {
@@ -25,7 +30,39 @@ struct ContentView: View {
                 ARModeView(currentMode: $currentMode)
             }
         }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                moveWindowToExternalDisplay()
+            }
+        }
+        .onReceive(screenChange) { _ in
+            print("Display Changed")
+            moveWindowToExternalDisplay()
+            
+        }
         .environmentObject(calibration)
+    }
+    
+    func moveWindowToExternalDisplay() {
+        guard let window = NSApp.mainWindow else { return }
+        let screens = NSScreen.screens
+        if let targetScreen = screens.first(where: {$0.localizedName == targetScreenName}) {
+            if window.screen == targetScreen && window.styleMask.contains(.fullScreen) {
+                return
+            }
+            
+            window.setFrameOrigin(targetScreen.frame.origin)
+            
+            if !window.styleMask.contains(.fullScreen) {
+                window.toggleFullScreen(nil)
+            }
+            print("\(targetScreenName) Detected.")
+        } else {
+            if window.styleMask.contains(.fullScreen) {
+                window.toggleFullScreen(nil)
+            }
+            print("\(targetScreenName) Not found.")
+        }
     }
 }
 
