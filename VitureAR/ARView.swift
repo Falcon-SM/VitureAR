@@ -164,12 +164,28 @@ struct ARModeView: View {
                     
                     Divider().background(Color.gray)
                     
-                    Group {
+                    VStack(alignment: .leading, spacing: 10) {
                         Text("Hand Depth & Size").font(.subheadline).foregroundColor(.yellow)
-                        sliderRow(title: "Base Z Dist", value: $handCoordinator.handBaseZ, range: -1.0...0.0, format: "%.2f m")
-                        sliderRow(title: "Depth Multiplier", value: $handCoordinator.handDepthMultiplier, range: 0.0...0.1, format: "%.3f")
-                        sliderRow(title: "Joint Size", value: $handCoordinator.jointRadius, range: 0.001...0.02, format: "%.3f")
-                        sliderRow(title: "Bone Thickness", value: $handCoordinator.boneRadius, range: 0.001...0.02, format: "%.3f")
+                        
+                        sliderRow(title: "Base Z Dist",
+                                  value: $handCoordinator.handBaseZ,
+                                  range: Float(-1.0)...Float(0.0),
+                                  format: "%.2f m")
+                        
+                        sliderRow(title: "Depth Multiplier",
+                                  value: $handCoordinator.fingerDepthBias,
+                                  range: Float(0.0)...Float(0.1),
+                                  format: "%.3f")
+                        
+                        sliderRow(title: "Joint Size",
+                                  value: $handCoordinator.jointRadius,
+                                  range: Float(0.001)...Float(0.02),
+                                  format: "%.3f")
+                        
+                        sliderRow(title: "Bone Thickness",
+                                  value: $handCoordinator.boneRadius,
+                                  range: Float(0.001)...Float(0.02),
+                                  format: "%.3f")
                     }
                 }
                 .padding()
