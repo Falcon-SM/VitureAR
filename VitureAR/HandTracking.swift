@@ -10,14 +10,8 @@ import Vision
 import RealityKit
 import SwiftUI
 import Combine
-
-#if os(macOS)
 import AppKit
 typealias ARSystemColor = NSColor
-#else
-import UIKit
-typealias ARSystemColor = UIColor
-#endif
 
 typealias HandJoint = VNHumanHandPoseObservation.JointName
 
@@ -433,7 +427,7 @@ class HandTrackingCoordinator: ObservableObject {
         for (index, pair) in targets.enumerated() {
             let isHit = hitTargetIndices.contains(index)
             let color: ARSystemColor = isHit ? .systemGreen : .systemRed
-            var mat = UnlitMaterial(color: color)
+            let mat = UnlitMaterial(color: color)
             pair.left.model?.materials = [mat]
             pair.right.model?.materials = [mat]
         }
