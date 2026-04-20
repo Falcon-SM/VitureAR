@@ -1,10 +1,14 @@
 //
 //  VitureHandTracking.swift
-//  VitureAR — HandTracking.swift + USBCamera.swift を統合
 //
 //  深度補正:
 //    ・wristDepthCompression : 遠い手の視差を圧縮（デフォルト 0.65）
 //    ・fingerDepthBias        : 指先が手のひらより深くなりすぎるのを防ぐ（デフォルト 0.55）
+//
+//  ★ 変更点 (スケール調整):
+//    ・wristTargetLength を @Published 変数に昇格
+//      → ARView の設定パネルからリアルタイムに手の大きさ・奥行きを調整可能に
+//    ・updateHandTracking() 内のハードコード 0.08 を wristTargetLength で置き換え
 //
 
 import SwiftUI
@@ -168,10 +172,10 @@ struct CalibrationParams: Codable {
     var videoScale: CGFloat    = 1.90
     var videoOffsetX: CGFloat  = 0
     var videoOffsetY: CGFloat  = -368
-    var offsetX: CGFloat       = 0
-    var offsetY: CGFloat       = 0
-    var scaleX: CGFloat        = 1.0
-    var scaleY: CGFloat        = 1.0
+    var offsetX: CGFloat       = -500 // ← ここも必要なら変える
+    var offsetY: CGFloat       = -380 // ← ここも必要なら変える
+    var scaleX: CGFloat        = 1.5  // ★ 1.0 から 1.5 に変更
+    var scaleY: CGFloat        = 1.5  // ★ 1.0 から 1.5 に変更
     var leftParallax: CGFloat  = -11.0
     var rightParallax: CGFloat = 10.0
 }
@@ -180,6 +184,7 @@ private enum CalibrationKeys {
     static let left  = "calibration.leftParams"
     static let right = "calibration.rightParams"
 }
+
 
 final class CalibrationViewModel: ObservableObject {
     @Published var leftParams  = CalibrationParams(videoOffsetX: 207)  { didSet { save() } }
@@ -194,11 +199,13 @@ final class CalibrationViewModel: ObservableObject {
     }
 
     private func load() {
+ /*
         let dec = JSONDecoder()
         if let d = UserDefaults.standard.data(forKey: CalibrationKeys.left),
            let v = try? dec.decode(CalibrationParams.self, from: d) { leftParams = v }
         if let d = UserDefaults.standard.data(forKey: CalibrationKeys.right),
            let v = try? dec.decode(CalibrationParams.self, from: d) { rightParams = v }
+ */
     }
 
     func resetHandTransforms() {
@@ -225,10 +232,10 @@ final class HandTrackingCoordinator: ObservableObject {
     @Published var videoOffsetY: Float = -368.0
 
     // ── 手の変換 ──
-    @Published var handScaleX:  Float = 1.0
-    @Published var handScaleY:  Float = 1.0
-    @Published var handOffsetX: Float = 0.0
-    @Published var handOffsetY: Float = 0.0
+    @Published var handScaleX:  Float = 1.5
+    @Published var handScaleY:  Float = 1.5
+    @Published var handOffsetX: Float = -500
+    @Published var handOffsetY: Float = -380
     @Published var handBaseZ:   Float = 0.0
 
     // ── 描画サイズ ──
@@ -243,6 +250,12 @@ final class HandTrackingCoordinator: ObservableObject {
     /// 指のZが手のひらより深くなりすぎるのを防ぐ係数（0=完全に手首と同じZ / 1=IK解をそのまま使用）
     /// 手を伸ばしたとき指先が沈みすぎる場合は下げる
     @Published var fingerDepthBias: Float = 0.55
+
+    // ★ 追加: 手首〜中指MCP間の目標実寸（メートル）
+    // 値を上げると → 手が大きく描画され、奥に配置される
+    // 値を下げると → 手が小さく描画され、手前に配置される
+    // 人間の平均は約 0.08 m（8 cm）。体格や距離感に合わせて調整してください。
+    @Published var wristTargetLength: Float = 0.08
 
     private let fingers: [[HandJoint]] = [
         [.wrist, .thumbCMC, .thumbMP, .thumbIP, .thumbTip],
@@ -363,14 +376,14 @@ final class HandTrackingCoordinator: ObservableObject {
             // ── STEP 2: 手首の3D位置を推定し、深度を圧縮する ──
             var wrist3D: simd_float3 = simd_float3(0, 0, screenZ)
             if let rayWrist = jointRays[.wrist], let rayMid = jointRays[.middleMCP] {
-                // 手首〜中指MCP間の実寸（~8 cm）からZを逆算
-                let targetLength: Float = 0.08 * handScaleX
+                // ★ 変更: ハードコード 0.08 → wristTargetLength を使用
+                // 手首〜中指MCP間の実寸からZを逆算
+                let targetLength: Float = wristTargetLength * handScaleX
                 let distRays = distance(rayWrist, rayMid)
                 let rawT = targetLength / max(distRays, 0.001)
 
                 // 🔑 深度圧縮: 遠い手ほど視差が激しくなる問題を抑制
-                // refDist より深い部分だけを wristDepthCompression で圧縮する
-                let excess       = rawT - refDist              // 0以上 = スクリーンより奥
+                let excess       = rawT - refDist
                 let compExcess   = excess > 0
                     ? excess * wristDepthCompression
                     : excess
@@ -384,7 +397,7 @@ final class HandTrackingCoordinator: ObservableObject {
             joint3DPositions[.wrist] = wrist3D
 
             // ── STEP 3: IK で各指の3D姿勢を復元（fingerDepthBias で沈み込みを抑制）──
-            let bias = fingerDepthBias  // ローカルキャプチャ
+            let bias = fingerDepthBias
 
             func solveChild(parent: HandJoint, child: HandJoint) {
                 guard let pPos = joint3DPositions[parent],
@@ -400,20 +413,16 @@ final class HandTrackingCoordinator: ObservableObject {
                     let sqrtD  = sqrt(disc)
                     let t1     = dotVal + sqrtD
                     let t2     = dotVal - sqrtD
-                    // 親の深度に最も近い解を選ぶ（従来方式）
                     let parentT = pPos.z / cRay.z
                     t = abs(t1 - parentT) < abs(t2 - parentT) ? t1 : t2
-                    // 有効範囲チェック（負のtは「カメラ後方」なので棄却）
                     if t < 0 { t = max(t1, t2) }
                 } else {
                     t = dotVal
                 }
 
                 let rawChildPos = cRay * t
-                // 🔑 fingerDepthBias: 指のZが親より深くなりすぎる問題を抑制
-                // bias=1.0 → IK解をそのまま使用、bias=0.0 → 親Zに完全に合わせる
+                // 🔑 fingerDepthBias
                 let biasedZ = pPos.z + (rawChildPos.z - pPos.z) * bias
-                // 安全チェック: cRay.z がほぼ0の場合（水平レイ）は親位置を維持
                 if abs(cRay.z) > 1e-4 {
                     let finalT = biasedZ / cRay.z
                     joint3DPositions[child] = cRay * finalT
@@ -423,12 +432,12 @@ final class HandTrackingCoordinator: ObservableObject {
             }
 
             for finger in fingers {
-                for i in 0 ..< (finger.count - 1) {
-                    solveChild(parent: finger[i], child: finger[i + 1])
+                for i in 1..<finger.count {
+                    solveChild(parent: finger[i-1], child: finger[i])
                 }
             }
 
-            // ── STEP 4: 計算した3D座標にモデルを配置 ──
+            // ── STEP 4: エンティティ配置 ──
             for (jointName, pos3D) in joint3DPositions {
                 let pair: HandEntityPair
                 if let existing = currentState.joints[jointName] {
@@ -440,18 +449,18 @@ final class HandTrackingCoordinator: ObservableObject {
                     currentState.joints[jointName] = pair
                 }
                 pair.setEnabled(true)
-                let r = jointRadius
                 pair.leftSceneNode.position  = pos3D
                 pair.rightSceneNode.position = pos3D
-                pair.leftSceneNode.scale     = [r, r, r]
-                pair.rightSceneNode.scale    = [r, r, r]
+                let r = jointRadius
+                pair.leftSceneNode.scale  = [r, r, r]
+                pair.rightSceneNode.scale = [r, r, r]
             }
 
             var boneIndex = 0
             for finger in fingers {
-                for i in 0 ..< (finger.count - 1) {
-                    guard let startPos = joint3DPositions[finger[i]],
-                          let endPos   = joint3DPositions[finger[i + 1]] else { continue }
+                for i in 1..<finger.count {
+                    guard let startPos = joint3DPositions[finger[i-1]],
+                          let endPos   = joint3DPositions[finger[i]] else { continue }
                     let pair: HandEntityPair
                     if boneIndex < currentState.bones.count {
                         pair = currentState.bones[boneIndex]
@@ -467,7 +476,7 @@ final class HandTrackingCoordinator: ObservableObject {
                 }
             }
 
-            // ── STEP 5: ピンチ判定・レーザー（正確な3D距離で判定）──
+            // ── STEP 5: ピンチ判定・レーザー ──
             if let thumb3D = joint3DPositions[.thumbTip],
                let index3D = joint3DPositions[.indexTip],
                let w3D     = joint3DPositions[.wrist] {
@@ -643,7 +652,6 @@ struct HandSkeletonView: View {
         }
     }
 
-    // ── 型推論を軽くするため @ViewBuilder で分割 ──
     @ViewBuilder
     private func skeletonPath(size: CGSize) -> some View {
         Path { path in
@@ -707,7 +715,6 @@ struct USBCameraModeView: View {
         .onDisappear { cameraManager.session.stopRunning() }
     }
 
-    // ── 型推論を分割 ──
     @ViewBuilder
     private var gearButton: some View {
         VStack {
@@ -771,7 +778,7 @@ struct USBCameraModeView: View {
     }
 }
 
-// MARK: - Calibration Panel（型推論を細かく分割）
+// MARK: - Calibration Panel
 private struct CalibrationPanelView: View {
     @ObservedObject var calibration: CalibrationViewModel
     let onClose: () -> Void
@@ -864,7 +871,6 @@ private struct CalibrationPanelView: View {
         }
     }
 
-    // 共通スライダー行（型推論を最小化）
     private func sliderRow(label: String, value: Binding<CGFloat>, range: ClosedRange<CGFloat>) -> some View {
         HStack {
             Text("\(label): \(Int(value.wrappedValue))")

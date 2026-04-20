@@ -37,7 +37,7 @@ class SpacialCoordinator: ObservableObject {
     @Published var ipd: Float = 0.063 {
         didSet { updateIPD() }
     }
-    @Published var fieldOfView: CGFloat = 32.8 {
+    @Published var fieldOfView: CGFloat = 30.0 {
             didSet {
                 leftCamera.camera.fieldOfViewInDegrees = Float(fieldOfView)
                 rightCamera.camera.fieldOfViewInDegrees = Float(fieldOfView)
@@ -59,6 +59,7 @@ class SpacialCoordinator: ObservableObject {
         lock.unlock()
     }
     
+    /*
     func setup() {
         guard let lv = leftView, let rv = rightView else { return }
         
@@ -114,6 +115,66 @@ class SpacialCoordinator: ObservableObject {
             self?.onUpdate()
         }
     }
+    */
+    func setup() {
+            guard let lv = leftView, let rv = rightView else { return }
+            
+            lv.scene.anchors.removeAll()
+            rv.scene.anchors.removeAll()
+            
+            let customModel = try? Entity.load(named: "glove_baseball_mtl_variant")
+            
+            func configure(_ view: ARView, _ head: Entity, _ cam: PerspectiveCamera) {
+                let anchor = AnchorEntity(world: .zero)
+                view.environment.background = .color(.black) // 調光機能で現実とブレンド
+                
+                view.environment.lighting.intensityExponent = 1.0
+                
+                let sun = DirectionalLight()
+                sun.light.intensity = 15000
+                sun.light.color = .white
+                sun.shadow = DirectionalLightComponent.Shadow()
+                
+                let sunEntity = Entity()
+                sunEntity.orientation = simd_quatf(angle: .pi * 0.25, axis: [1, 0, 0]) * simd_quatf(angle: .pi * -0.25, axis: [0, 1, 0])
+                sunEntity.addChild(sun)
+                anchor.addChild(sunEntity)
+
+                // 2. 球体の代わりに、読み込んだUSDZモデルのクローンを配置
+                if let model = customModel?.clone(recursive: true) {
+                    // カメラの前方50cm、少し下(-10cm)に配置
+                    model.position = [0, -0.1, -0.5]
+
+                    anchor.addChild(model)
+                } else {
+                    // モデル名が間違っている等で読み込めなかった場合のフォールバック（デバッグ用・赤い球体）
+                    print("エラー: USDZモデルが見つかりません。")
+                    let fallbackMesh = MeshResource.generateSphere(radius: 0.1)
+                    let fallbackMaterial = SimpleMaterial(color: .red, isMetallic: false)
+                    let fallbackEntity = ModelEntity(mesh: fallbackMesh, materials: [fallbackMaterial])
+                    fallbackEntity.position = [0, 0, -0.5]
+                    anchor.addChild(fallbackEntity)
+                }
+                
+                // 3. カメラの組み立て
+                head.children.removeAll() // 二重追加防止
+                head.addChild(cam)
+                anchor.addChild(head)
+                
+                view.scene.addAnchor(anchor)
+                cam.camera.fieldOfViewInDegrees = Float(fieldOfView)
+            }
+            
+            configure(lv, leftHead, leftCamera)
+            configure(rv, rightHead, rightCamera)
+            
+            updateIPD()
+            
+            subscription?.cancel()
+            subscription = lv.scene.subscribe(to: SceneEvents.Update.self) { [weak self] _ in
+                self?.onUpdate()
+            }
+        }
         
     
     private func updateIPD() {
@@ -131,9 +192,7 @@ class SpacialCoordinator: ObservableObject {
         lock.unlock()
         
         if willReset {
-            let forward = q.act(simd_float3(0, 0, -1))
-            let yaw = atan2(forward.x, -forward.z)
-            referenceQ = simd_quatf(angle: yaw, axis: [0, 1, 0]).inverse
+            referenceQ = q.inverse
             referenceP = p
         }
         
